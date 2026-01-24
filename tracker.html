@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Alexandre Tracker</title>
+    <style>
+        body { font-family: sans-serif; background: #1a1a1a; color: white; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        .container { position: relative; border: 2px solid #555; background: #000; display: none; margin-bottom: 15px; }
+        canvas { position: absolute; top: 0; left: 0; cursor: crosshair; }
+        .controls { background: #333; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; gap: 15px; }
+        button {
+            padding: 10px 20px; cursor: pointer; font-weight: bold;
+            border: 1px solid #666; border-radius: 4px; transition: 0.2s;
+            background: #404040; color: #f0f0f0;
+        }
+        button:hover {
+            background: #555;
+            border-color: #888;
+        }
+        #timeline { width: 320px; height: 20px; background: #333; position: relative; margin-top: 5px; cursor: pointer; border: 1px solid #555; }
+        .keyframe-marker { position: absolute; top: 3px; width: 4px; height: 14px; background: #f0f0f0; transform: translateX(-50%); pointer-events: none; }
+        .instruction { color: #aaa; font-size: 0.8em; margin-bottom: 10px; }
+        #loadingOverlay { display:none; position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:100; flex-direction:column; justify-content:center; align-items:center; }
+        #cancelRenderBtn { margin-top: 20px; }
+    </style>
+</head>
+<body>
+
+    <div class="controls">
+        <input type="file" id="fileInput" accept="video/*">
+        <input type="file" id="overlayInput" accept="image/*,video/*" style="display:none;">
+    </div>
+
+    <div id="videoContainer" class="container">
+        <video id="video" muted playsinline></video>
+        <canvas id="canvasOutput"></canvas>
+        <div id="loadingOverlay">
+            <div style="color:white; font-size:1.2em; margin-bottom:15px;">Renderizando Vídeo...</div>
+            <div style="width:60%; height:10px; background:#444; border-radius:5px; overflow:hidden;"><div id="progressBar" style="width:0%; height:100%; background:#f0f0f0; transition: width 0.1s;"></div></div>
+            <div id="progressText" style="color:#aaa; margin-top:10px; font-size:0.9em;">0%</div>
+            <button id="cancelRenderBtn">CANCELAR</button>
+        </div>
+    </div>
+
+    <div id="timeline" style="display:none;">
+        <div id="playhead" style="position: absolute; left: 0; top: 0; width: 2px; height: 100%; background: #f0f0f0; pointer-events: none;"></div>
+        <div id="markers"></div>
+    </div>
+
+    <p class="instruction">Clique nos pontos verdes para fixar. Selecione um ponto e carregue uma imagem para personalizá-lo.</p>
+
+    <div class="btn-group" id="uiButtons" style="display:none;">
+        <button id="addImgBtn">Adicionar</button>
+        <button id="deleteObjBtn">Remover Imagem</button>
+        <button id="blendBtn">Fundo Video</button>
+        <button id="playBtn">Play</button>
+        <button id="stopBtn">Stop</button>
+        <button id="keyframeBtn">Keyframe</button>
+        <button id="deleteKeyframeBtn">Apagar</button>
+        <button id="copyKeyframeBtn">Copiar</button>
+        <button id="pasteKeyframeBtn">Colar</button>
+        <button id="downloadBtn">Download</button>
+        <button id="clearBtn">Limpar Tudo</button>
+    </div>
+
+    <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="console.log('OpenCV Ready');"></script>
+    <script src="https://cdn.jsdelivr.net/npm/webm-muxer@3.1.0/build/webm-muxer.min.js"></script>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvasOutput');
+        const ctx = canvas.getContext('2d');
+        
+        let defaultMedia = new Image();
+        let defaultIsVideo = false;
+        let tempCanvas = document.createElement('canvas');
+        let tempCtx = tempCanvas.getContext('2d');
+        // Mapa para guardar as propriedades de cada objeto anexado (tamanho, rotação, offset)
+        let attachedObjects = new Map(); 
+        let selectedIdx = -1; // Índice do ponto atualmente selecionado para edição
+        let dragInfo = null;  // Informações sobre o arrasto atual
+        let isRunning = false;
+        
+        // Memória OpenCV
+        let cap, frame, frameGray, oldGray, p0, p1, st, err;
+        let initialPoints = null;
+        let trackerHistory = [];
+        let clipboardPose = null;
+        let isExporting = false;
+        let cancelExport = false;
+
+        video.onended = () => {
+            if (isExporting) return; // Impede que o sistema resete durante a renderização offline
+            resetSystem();
+        };
+
+        // Garante que o estado do OpenCV esteja sincronizado quando o vídeo é navegado (seek)
+        video.addEventListener('seeked', () => {
+            if (isRunning || isExporting) return; // Se estiver rodando ou exportando, ignorar
+
+            if (video.currentTime === 0) {
+                // Se voltou para o início, reseta o estado dos pontos
+                setupInitialFrame();
+            } else {
+                // Se pulou para outro ponto (via scrub), lê o frame atual
+                if (cap && !frame.isDeleted()) {
+                    cap.read(frame);
+                    cv.cvtColor(frame, frameGray, cv.COLOR_RGBA2GRAY);
+                    frameGray.copyTo(oldGray); // Prepara para o próximo rastreamento
+                    
+                    // Tenta restaurar o estado do rastreador do histórico
+                    let best = null; 
+                    // Procura para trás pelo frame mais recente no ou antes do tempo atual
+                    for (let i = trackerHistory.length - 1; i >= 0; i--) {
+                        if (trackerHistory[i].time <= video.currentTime) {
+                            best = trackerHistory[i];
+                            break;
+                        }
+                    }
+
+                    if (best && !p0.empty() && p0.rows * 2 === best.p0.length) {
+                        p0.data32F.set(best.p0);
+                        st.data.set(best.st);
+                    } else if (initialPoints && !initialPoints.empty()) {
+                        // Se nenhum histórico for encontrado, reseta para o primeiro conjunto de pontos.
+                        initialPoints.copyTo(p0);
+                        st.delete();
+                        st = new cv.Mat(p0.rows, 1, cv.CV_8U, new cv.Scalar(1));
+                    }
+                    
+                    render(); // Redesenha a cena no novo frame
+                }
+            }
+        });
+
+        document.getElementById('overlayInput').onchange = (e) => {
+            if (e.target.files && e.target.files[0]) {
+                const file = e.target.files[0];
+                const url = URL.createObjectURL(file);
+                const isVideo = file.type.startsWith('video/');
+                
+                let newMedia;
+                if (isVideo) {
+                    newMedia = document.createElement('video');
+                    newMedia.src = url;
+                    newMedia.muted = true;
+                    newMedia.loop = true;
+                    newMedia.playsInline = true;
+                    newMedia.play();
+                } else {
+                    newMedia = new Image();
+                    newMedia.src = url;
+                }
+
+                const onLoad = () => {
+                    if (selectedIdx !== -1 && attachedObjects.has(selectedIdx)) {
+                        let obj = attachedObjects.get(selectedIdx);
+                        obj.mediaSrc = url;
+                        obj.media = newMedia;
+                        obj.isVideo = isVideo;
+                        if (!isRunning) render();
+                    } else {
+                        defaultMedia = newMedia;
+                        defaultIsVideo = isVideo;
+                        if (!isRunning) render();
+                    }
+                };
+                
+                if (isVideo) newMedia.onloadedmetadata = onLoad;
+                else newMedia.onload = onLoad;
+                
+                e.target.value = ''; // Permite selecionar o mesmo arquivo novamente
+            }
+        };
+
+        document.getElementById('fileInput').onchange = (e) => {
+            const url = URL.createObjectURL(e.target.files[0]);
+            video.src = url;
+            video.onloadedmetadata = () => {
+                const width = 320;
+                let height = Math.floor(video.videoHeight / video.videoWidth * 320);
+                if (height % 2 !== 0) height -= 1; // Garante altura par para evitar erros no encoder
+                canvas.width = width; canvas.height = height;
+                video.width = width; video.height = height;
+                attachedObjects.clear();
+                selectedIdx = -1;
+                trackerHistory = [];
+                
+                document.getElementById('videoContainer').style.display = 'block';
+                document.getElementById('uiButtons').style.display = 'flex';
+                document.getElementById('timeline').style.display = 'block';
+                
+                if (initialPoints) {
+                    initialPoints.delete();
+                    initialPoints = null;
+                }
+                resetSystem();
+            };
+        };
+
+        function resetSystem() {
+            isRunning = false;
+            document.getElementById('playBtn').innerText = "PLAY";
+            video.pause();
+
+            if (frame) [frame, frameGray, oldGray, p0, p1, st, err].forEach(m => { if(m) m.delete() });
+            
+            frame = new cv.Mat(video.height, video.width, cv.CV_8UC4);
+            frameGray = new cv.Mat();
+            oldGray = new cv.Mat();
+            p0 = new cv.Mat();
+            p1 = new cv.Mat();
+            st = new cv.Mat();
+            err = new cv.Mat();
+            cap = new cv.VideoCapture(video);
+
+            // Dispara o evento 'seeked' que irá configurar os pontos de forma segura
+            video.currentTime = 0;
+        }
+
+        function setupInitialFrame() {
+            if (!cap || frame.isDeleted()) return; // Proteção contra execução prematura
+            cap.read(frame);
+            cv.cvtColor(frame, frameGray, cv.COLOR_RGBA2GRAY);
+            frameGray.copyTo(oldGray);
+            
+            if (initialPoints) {
+                initialPoints.copyTo(p0);
+            } else {
+                cv.goodFeaturesToTrack(frameGray, p0, 100, 0.01, 10, new cv.Mat(), 7);
+                initialPoints = p0.clone();
+            }
+            
+            st = new cv.Mat(p0.rows, 1, cv.CV_8U, new cv.Scalar(1));
+            render();
+        }
+
+        function render() {
+            // Desenha o frame atual
+            if (video.duration) {
+                document.getElementById('playhead').style.left = (video.currentTime / video.duration * 100) + '%';
+            }
+
+            cv.imshow('canvasOutput', frame);
+            
+            if (!p0.empty()) {
+                for (let i = 0; i < p0.rows; i++) {
+                    // Apenas desenha se o rastreador confirmar que o ponto ainda é válido
+                    if (st.data[i] === 1) {
+                        let px = p0.data32F[i * 2];
+                        let py = p0.data32F[i * 2 + 1];
+
+                        if (attachedObjects.has(i)) {
+                            let obj = attachedObjects.get(i);
+                            
+                            // --- INTERPOLAÇÃO DE KEYFRAMES ---
+                            // Se existirem keyframes e o usuário não estiver arrastando este objeto agora
+                            if (obj.keyframes && obj.keyframes.length > 0 && (selectedIdx !== i || !dragInfo)) {
+                                const time = video.currentTime;
+                                obj.keyframes.sort((a, b) => a.time - b.time); // Garante ordem
+                                
+                                // Encontra keyframes vizinhos
+                                let prev = obj.keyframes[0];
+                                let next = obj.keyframes[obj.keyframes.length - 1];
+                                
+                                for (let k = 0; k < obj.keyframes.length - 1; k++) {
+                                    if (time >= obj.keyframes[k].time && time < obj.keyframes[k+1].time) {
+                                        prev = obj.keyframes[k]; next = obj.keyframes[k+1]; break;
+                                    }
+                                }
+
+                                const t = (next.time === prev.time) ? 0 : (time - prev.time) / (next.time - prev.time);
+                                const clampT = Math.max(0, Math.min(1, t)); // Garante entre 0 e 1
+                                
+                                // Interpolação Linear
+                                obj.offsetX = prev.offsetX + (next.offsetX - prev.offsetX) * clampT;
+                                obj.offsetY = prev.offsetY + (next.offsetY - prev.offsetY) * clampT;
+                                obj.width = prev.width + (next.width - prev.width) * clampT;
+                                obj.height = prev.height + (next.height - prev.height) * clampT;
+                                
+                                // Interpolação de Rotação (Caminho mais curto)
+                                let rotDiff = next.rotation - prev.rotation;
+                                while (rotDiff > Math.PI) rotDiff -= 2 * Math.PI;
+                                while (rotDiff < -Math.PI) rotDiff += 2 * Math.PI;
+                                obj.rotation = prev.rotation + rotDiff * clampT;
+                            }
+                            // ---------------------------------
+
+                            // Calcula posição final baseada no ponto rastreado + offset configurado
+                            let cx = px + obj.offsetX;
+                            let cy = py + obj.offsetY;
+
+                            ctx.save();
+                            ctx.translate(cx, cy);
+                            ctx.rotate(obj.rotation);
+                            
+                            // Desenha a imagem
+                            let drawMedia = (obj.media && obj.media.src) ? obj.media : defaultMedia;
+
+                            if (drawMedia && (drawMedia.src || drawMedia.width > 0)) {
+                                if (obj.blendMode === 'cutout') {
+                                    // Modo Recortar (Remove preto via pixel manipulation)
+                                    let w = Math.floor(obj.width);
+                                    let h = Math.floor(obj.height);
+                                    if (w > 0 && h > 0) {
+                                        if (tempCanvas.width < w || tempCanvas.height < h) {
+                                            tempCanvas.width = Math.max(tempCanvas.width || 0, w);
+                                            tempCanvas.height = Math.max(tempCanvas.height || 0, h);
+                                        }
+                                        tempCtx.clearRect(0, 0, w, h);
+                                        tempCtx.drawImage(drawMedia, 0, 0, w, h);
+                                        let frameData = tempCtx.getImageData(0, 0, w, h);
+                                        let data = frameData.data;
+                                        for (let k = 0; k < data.length; k += 4) {
+                                            if (data[k] < 40 && data[k+1] < 40 && data[k+2] < 40) data[k+3] = 0;
+                                        }
+                                        tempCtx.putImageData(frameData, 0, 0);
+                                        ctx.drawImage(tempCanvas, 0, 0, w, h, -obj.width/2, -obj.height/2, obj.width, obj.height);
+                                    }
+                                } else {
+                                    ctx.globalCompositeOperation = obj.blendMode || 'source-over';
+                                    ctx.drawImage(drawMedia, -obj.width/2, -obj.height/2, obj.width, obj.height);
+                                    ctx.globalCompositeOperation = 'source-over';
+                                }
+                            } else if (!isExporting) {
+                                // Placeholder se não houver imagem
+                                ctx.fillStyle = "rgba(0, 255, 255, 0.3)";
+                                ctx.fillRect(-obj.width/2, -obj.height/2, obj.width, obj.height);
+                            }
+
+                            // Desenha controles se estiver selecionado
+                            if (i === selectedIdx && !isExporting) {
+                                ctx.strokeStyle = "#f0f0f0";
+                                ctx.lineWidth = 2;
+                                ctx.strokeRect(-obj.width/2, -obj.height/2, obj.width, obj.height);
+
+                                // Cantos (Redimensionar)
+                                ctx.fillStyle = "#f0f0f0";
+                                const s = 6;
+                                ctx.fillRect(-obj.width/2 - s/2, -obj.height/2 - s/2, s, s); // Top-Left
+                                ctx.fillRect(obj.width/2 - s/2, -obj.height/2 - s/2, s, s);  // Top-Right
+                                ctx.fillRect(-obj.width/2 - s/2, obj.height/2 - s/2, s, s);  // Bottom-Left
+                                ctx.fillRect(obj.width/2 - s/2, obj.height/2 - s/2, s, s);   // Bottom-Right
+
+                                // Alça de Rotação (Topo)
+                                ctx.beginPath();
+                                ctx.moveTo(0, -obj.height/2);
+                                ctx.lineTo(0, -obj.height/2 - 20);
+                                ctx.stroke();
+                                ctx.beginPath();
+                                ctx.arc(0, -obj.height/2 - 20, 5, 0, Math.PI * 2);
+                                ctx.fill();
+                            }
+                            ctx.restore();
+
+                        } else if (!isExporting) {
+                            // Ponto não anexado (apenas rastreamento)
+                            ctx.fillStyle = "#cccccc";
+                            ctx.beginPath();
+                            ctx.arc(px, py, 3, 0, 2 * Math.PI);
+                            ctx.fill();
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Lógica de Interação (Mouse) ---
+        
+        function getLocalCoords(mx, my, cx, cy, rotation) {
+            // Converte coordenada do mouse para o espaço local do objeto rotacionado
+            let dx = mx - cx;
+            let dy = my - cy;
+            let cos = Math.cos(-rotation);
+            let sin = Math.sin(-rotation);
+            return {
+                x: dx * cos - dy * sin,
+                y: dx * sin + dy * cos
+            };
+        }
+
+        canvas.onmousedown = (e) => {
+            if (p0.empty()) return;
+            const rect = canvas.getBoundingClientRect();
+            const mx = e.clientX - rect.left;
+            const my = e.clientY - rect.top;
+
+            // 1. Verifica se clicou nos controles do objeto selecionado
+            if (selectedIdx !== -1 && attachedObjects.has(selectedIdx)) {
+                let obj = attachedObjects.get(selectedIdx);
+                let px = p0.data32F[selectedIdx * 2];
+                let py = p0.data32F[selectedIdx * 2 + 1];
+                let cx = px + obj.offsetX;
+                let cy = py + obj.offsetY;
+                
+                let local = getLocalCoords(mx, my, cx, cy, obj.rotation);
+
+                // Verifica Rotação (Alça superior)
+                if (Math.abs(local.x) < 10 && Math.abs(local.y - (-obj.height/2 - 20)) < 10) {
+                    dragInfo = { type: 'rotate', idx: selectedIdx, startRot: obj.rotation, startAngle: Math.atan2(my - cy, mx - cx) };
+                    return;
+                }
+
+                // Verifica Redimensionamento (Qualquer canto)
+                if (Math.abs(Math.abs(local.x) - obj.width/2) < 10 && Math.abs(Math.abs(local.y) - obj.height/2) < 10) {
+                    dragInfo = { type: 'resize', idx: selectedIdx };
+                    return;
+                }
+
+                // Verifica Mover (Corpo do objeto)
+                if (Math.abs(local.x) < obj.width/2 && Math.abs(local.y) < obj.height/2) {
+                    dragInfo = { type: 'move', idx: selectedIdx, startX: mx, startY: my, startOffX: obj.offsetX, startOffY: obj.offsetY };
+                    return;
+                }
+            }
+
+            // 2. Se não clicou em nada selecionado, tenta selecionar um novo ponto
+            let clickedIdx = -1;
+            let minD = 15;
+
+            // Prioridade: Verificar se clicou em alguma IMAGEM anexada
+            for (const [i, obj] of attachedObjects) {
+                if (st.data[i] === 1) {
+                    let px = p0.data32F[i * 2];
+                    let py = p0.data32F[i * 2 + 1];
+                    let cx = px + obj.offsetX;
+                    let cy = py + obj.offsetY;
+                    let local = getLocalCoords(mx, my, cx, cy, obj.rotation);
+                    
+                    if (Math.abs(local.x) < obj.width/2 && Math.abs(local.y) < obj.height/2) {
+                        clickedIdx = i;
+                        break; // Encontrou uma imagem, para de procurar
+                    }
+                }
+            }
+
+            // Se não clicou em imagem, verifica proximidade dos pontos verdes
+            if (clickedIdx === -1) {
+                for (let i = 0; i < p0.rows; i++) {
+                    if (st.data[i] === 1) {
+                        const px = p0.data32F[i * 2];
+                        const py = p0.data32F[i * 2 + 1];
+                        const dist = Math.hypot(mx - px, my - py);
+                        if (dist < minD) {
+                            minD = dist;
+                            clickedIdx = i;
+                        }
+                    }
+                }
+            }
+
+            if (clickedIdx !== -1) {
+                selectedIdx = clickedIdx;
+                if (!attachedObjects.has(clickedIdx)) {
+                    // Cria novo objeto anexado com valores padrão
+                    attachedObjects.set(clickedIdx, { 
+                        offsetX: 0, offsetY: 0, 
+                        width: 100, height: 100, 
+                        rotation: 0,
+                        keyframes: [],
+                        mediaSrc: null,
+                        media: null,
+                        isVideo: false,
+                        blendMode: 'source-over'
+                    });
+                }
+                // Inicia arrasto imediatamente
+                let obj = attachedObjects.get(clickedIdx);
+                dragInfo = { type: 'move', idx: clickedIdx, startX: mx, startY: my, startOffX: obj.offsetX, startOffY: obj.offsetY };
+                updateTimeline();
+                
+                // Atualiza texto do botão
+                updateBlendBtnText(obj.blendMode);
+                
+                if (!isRunning) render();
+            } else {
+                // Clicou no vazio: não faz nada (mantém seleção)
+            }
+        };
+
+        canvas.onmousemove = (e) => {
+            if (!dragInfo) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const mx = e.clientX - rect.left;
+            const my = e.clientY - rect.top;
+            let obj = attachedObjects.get(dragInfo.idx);
+            let px = p0.data32F[dragInfo.idx * 2];
+            let py = p0.data32F[dragInfo.idx * 2 + 1];
+
+            if (dragInfo.type === 'move') {
+                // Move o offset relativo ao ponto rastreado
+                let dx = mx - dragInfo.startX;
+                let dy = my - dragInfo.startY;
+                obj.offsetX = dragInfo.startOffX + dx;
+                obj.offsetY = dragInfo.startOffY + dy;
+            } 
+            else if (dragInfo.type === 'rotate') {
+                // Calcula novo ângulo
+                let cx = px + obj.offsetX;
+                let cy = py + obj.offsetY;
+                let currentAngle = Math.atan2(my - cy, mx - cx);
+                obj.rotation = dragInfo.startRot + (currentAngle - dragInfo.startAngle);
+            }
+            else if (dragInfo.type === 'resize') {
+                // Redimensiona baseado na distância do centro (simétrico)
+                let cx = px + obj.offsetX;
+                let cy = py + obj.offsetY;
+                let local = getLocalCoords(mx, my, cx, cy, obj.rotation);
+                obj.width = Math.max(20, Math.abs(local.x) * 2);
+                obj.height = Math.max(20, Math.abs(local.y) * 2);
+            }
+
+            if (!isRunning) render();
+        };
+
+        canvas.onmouseup = () => {
+            dragInfo = null;
+        };
+
+        document.getElementById('addImgBtn').onclick = () => {
+            document.getElementById('overlayInput').click();
+        };
+
+        document.getElementById('deleteObjBtn').onclick = () => {
+            if (selectedIdx !== -1 && attachedObjects.has(selectedIdx)) {
+                attachedObjects.delete(selectedIdx);
+                selectedIdx = -1;
+                updateTimeline();
+                if (!isRunning) render();
+            }
+        };
+
+        document.getElementById('blendBtn').onclick = () => {
+            if (selectedIdx !== -1 && attachedObjects.has(selectedIdx)) {
+                let obj = attachedObjects.get(selectedIdx);
+                // Alterna: Normal -> Tela -> Recortar
+                if (!obj.blendMode || obj.blendMode === 'source-over') obj.blendMode = 'screen';
+                else if (obj.blendMode === 'screen') obj.blendMode = 'cutout';
+                else obj.blendMode = 'source-over';
+                
+                updateBlendBtnText(obj.blendMode);
+                if (!isRunning) render();
+            }
+        };
+
+        function updateBlendBtnText(mode) {
+            const btn = document.getElementById('blendBtn');
+            if (mode === 'screen') btn.innerText = "FUNDO: TELA";
+            else if (mode === 'cutout') btn.innerText = "FUNDO: RECORTAR";
+            else btn.innerText = "FUNDO: NORMAL";
+        }
+
+        document.getElementById('playBtn').onclick = function() {
+            if (!isRunning) {
+                isRunning = true;
+                video.play();
+                this.innerText = "PAUSE";
+                
+                // Limpa histórico futuro para garantir consistência se regravar
+                trackerHistory = trackerHistory.filter(h => h.time < video.currentTime);
+                requestAnimationFrame(loop);
+            } else {
+                isRunning = false;
+                video.pause();
+                this.innerText = "PLAY";
+            }
+        };
+
+        document.getElementById('stopBtn').onclick = () => {
+            resetSystem();
+        };
+
+        document.getElementById('keyframeBtn').onclick = () => {
+            if (selectedIdx !== -1 && attachedObjects.has(selectedIdx)) {
+                let obj = attachedObjects.get(selectedIdx);
+                const time = video.currentTime;
+                
+                // Remove keyframe existente se estiver muito perto (substituição)
+                obj.keyframes = obj.keyframes.filter(k => Math.abs(k.time - time) > 0.05);
+                
+                // Adiciona novo estado
+                obj.keyframes.push({
+                    time: time,
+                    offsetX: obj.offsetX, offsetY: obj.offsetY,
+                    width: obj.width, height: obj.height,
+                    rotation: obj.rotation
+                });
+                
+                updateTimeline();
+                console.log("Keyframe adicionado em " + time.toFixed(2) + "s");
+            }
+        };
+
+        document.getElementById('deleteKeyframeBtn').onclick = () => {
+            if (selectedIdx !== -1 && attachedObjects.has(selectedIdx)) {
+                let obj = attachedObjects.get(selectedIdx);
+                const time = video.currentTime;
+                
+                // Remove keyframes próximos ao tempo atual (0.1s de tolerância)
+                const originalLen = obj.keyframes.length;
+                obj.keyframes = obj.keyframes.filter(k => Math.abs(k.time - time) > 0.1);
+                
+                if (obj.keyframes.length < originalLen) {
+                    updateTimeline();
+                    if (!isRunning) render();
+                    console.log("Keyframe removido.");
+                }
+            }
+        };
+
+        document.getElementById('copyKeyframeBtn').onclick = () => {
+            if (selectedIdx !== -1 && attachedObjects.has(selectedIdx)) {
+                let obj = attachedObjects.get(selectedIdx);
+                clipboardPose = {
+                    offsetX: obj.offsetX, offsetY: obj.offsetY,
+                    width: obj.width, height: obj.height,
+                    rotation: obj.rotation,
+                    mediaSrc: obj.mediaSrc,
+                    isVideo: obj.isVideo,
+                    blendMode: obj.blendMode
+                };
+                console.log("Propriedades copiadas.");
+            }
+        };
+
+        document.getElementById('pasteKeyframeBtn').onclick = () => {
+            if (selectedIdx !== -1 && attachedObjects.has(selectedIdx) && clipboardPose) {
+                let obj = attachedObjects.get(selectedIdx);
+                // Aplica valores
+                obj.offsetX = clipboardPose.offsetX;
+                obj.offsetY = clipboardPose.offsetY;
+                obj.width = clipboardPose.width;
+                obj.height = clipboardPose.height;
+                obj.rotation = clipboardPose.rotation;
+                obj.blendMode = clipboardPose.blendMode || 'source-over';
+                if (clipboardPose.mediaSrc) {
+                    obj.mediaSrc = clipboardPose.mediaSrc;
+                    obj.isVideo = clipboardPose.isVideo;
+                    if (obj.isVideo) {
+                        obj.media = document.createElement('video');
+                        obj.media.src = obj.mediaSrc;
+                        obj.media.muted = true; obj.media.loop = true; obj.media.playsInline = true;
+                        obj.media.play();
+                    } else {
+                        obj.media = new Image();
+                        obj.media.src = obj.mediaSrc;
+                    }
+                }
+                
+                // Atualiza UI
+                updateBlendBtnText(obj.blendMode);
+
+                // Força a criação de um keyframe para persistir a mudança
+                document.getElementById('keyframeBtn').click();
+            }
+        };
+
+        document.getElementById('cancelRenderBtn').onclick = () => {
+            cancelExport = true;
+        };
+
+        document.getElementById('downloadBtn').onclick = async () => {
+            if (isExporting) return;
+            
+            isExporting = true;
+            const savedSelectedIdx = selectedIdx;
+            selectedIdx = -1; // Garante que nenhuma borda de seleção seja desenhada
+            const btn = document.getElementById('downloadBtn');
+            const originalText = btn.innerText;
+            btn.innerText = "Renderizando...";
+            const overlay = document.getElementById('loadingOverlay');
+            overlay.style.display = 'flex';
+            document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('progressText').innerText = '0%';
+            
+            try {
+                // 1. Verificação de Suporte do Navegador
+                if (typeof VideoEncoder === 'undefined' || typeof WebMMuxer === 'undefined') {
+                    throw new Error("Seu navegador não suporta a renderização rápida (WebCodecs API). Tente usar o Google Chrome ou Edge mais recentes.");
+                }
+
+                // 2. Configuração do Muxer e Encoder
+                const muxer = new WebMMuxer.Muxer({
+                    target: new WebMMuxer.ArrayBufferTarget(),
+                    video: { codec: 'V_VP9', width: canvas.width, height: canvas.height, frameRate: 30 }
+                });
+
+                const encoder = new VideoEncoder({
+                    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+                    error: (e) => { throw e; }
+                });
+
+                const encoderConfig = {
+                    codec: 'vp09.00.10.08',
+                    width: canvas.width,
+                    height: canvas.height,
+                    bitrate: 4000000 // 4 Mbps
+                };
+                const support = await VideoEncoder.isConfigSupported(encoderConfig);
+                if (!support) {
+                    throw new Error("A configuração do encoder de vídeo (VP9) não é suportada pelo seu navegador.");
+                }
+                encoder.configure(encoderConfig);
+
+                // 3. Preparação para o Loop de Renderização
+                video.pause();
+                video.currentTime = 0;
+                await new Promise(r => { const h = () => { video.removeEventListener('seeked', h); r(); }; video.addEventListener('seeked', h); });
+                setupInitialFrame();
+                
+                const fps = 30;
+                const interval = 1 / fps;
+                const duration = video.duration;
+
+                // 4. Loop de Renderização Frame a Frame (Offline)
+                for (let i = 0; i < Math.floor(duration * fps); i++) {
+                    if (cancelExport) {
+                        console.log("Renderização cancelada pelo usuário.");
+                        break;
+                    }
+
+                    const currentTime = i * interval;
+                    video.currentTime = currentTime;
+                    await new Promise(r => { const h = () => { video.removeEventListener('seeked', h); r(); }; video.addEventListener('seeked', h); });
+
+                    // Sincroniza vídeos de overlay para o frame atual (garante o loop correto na exportação)
+                    const mediaToSync = new Set();
+                    for (const [idx, obj] of attachedObjects) {
+                        let m = (obj.media && obj.media.src) ? obj.media : defaultMedia;
+                        let isV = (obj.media && obj.media.src) ? obj.isVideo : defaultIsVideo;
+                        if (isV && m) mediaToSync.add(m);
+                    }
+                    const syncPromises = [];
+                    for (const m of mediaToSync) {
+                        if (!m.duration) continue;
+                        m.currentTime = currentTime % m.duration;
+                        syncPromises.push(new Promise(r => { const h = () => { m.removeEventListener('seeked', h); r(); }; m.addEventListener('seeked', h); }));
+                    }
+                    if (syncPromises.length > 0) await Promise.all(syncPromises);
+
+                    // Lê o frame do vídeo e atualiza o rastreador
+                    cap.read(frame);
+                    cv.cvtColor(frame, frameGray, cv.COLOR_RGBA2GRAY);
+
+                    // Tenta usar o histórico de rastreamento para precisão
+                    const historyFrame = trackerHistory.find(h => Math.abs(h.time - currentTime) < (interval / 2));
+                    if (historyFrame && !p0.empty()) {
+                        p0.data32F.set(historyFrame.p0);
+                        st.data.set(historyFrame.st);
+                    } else if (!p0.empty()) {
+                        // Se não houver histórico, calcula o rastreamento em tempo real
+                        let winSize = new cv.Size(21, 21);
+                        let criteria = new cv.TermCriteria(cv.TermCriteria_EPS | cv.TermCriteria_COUNT, 30, 0.01);
+                        cv.calcOpticalFlowPyrLK(oldGray, frameGray, p0, p1, st, err, winSize, 3, criteria);
+                        for (let pt = 0; pt < st.rows; pt++) {
+                            if (st.data[pt] === 1) {
+                                p0.data32F[pt * 2] = p1.data32F[pt * 2];
+                                p0.data32F[pt * 2 + 1] = p1.data32F[pt * 2 + 1];
+                            }
+                        }
+                    }
+
+                    // Desenha o resultado no canvas (que não está visível)
+                    render();
+                    
+                    // Codifica o frame do canvas
+                    const bitmap = await createImageBitmap(canvas);
+                    const videoFrame = new VideoFrame(bitmap, { timestamp: i * 1000000 / fps, duration: 1000000 / fps });
+                    encoder.encode(videoFrame);
+                    videoFrame.close();
+
+                    // Prepara para o próximo frame
+                    frameGray.copyTo(oldGray);
+
+                    // Atualiza a interface de progresso
+                    const progress = Math.min(100, Math.round(((i + 1) / (duration * fps)) * 100));
+                    document.getElementById('progressBar').style.width = progress + '%';
+                    document.getElementById('progressText').innerText = progress + '%';
+                }
+
+                // 5. Finalização
+                if (!cancelExport) {
+                    await encoder.flush();
+                    muxer.finalize();
+
+                    const { buffer } = muxer.target;
+                    const blob = new Blob([buffer], { type: 'video/webm' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'track_video.webm';
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                }
+
+            } catch (e) {
+                console.error(e);
+                alert("Erro na renderização: " + e.message);
+            } finally {
+                isExporting = false;
+                cancelExport = false;
+                selectedIdx = savedSelectedIdx; // Restaura a seleção ao finalizar
+                overlay.style.display = 'none';
+                btn.innerText = originalText;
+                resetSystem();
+            }
+        };
+
+        // Permite arrastar (scrub) a linha do tempo
+        const timeline = document.getElementById('timeline');
+        timeline.onmousedown = (e) => {
+            if (!video.duration) return;
+
+            const wasRunning = isRunning;
+            if (wasRunning) {
+                document.getElementById('playBtn').click(); // Pausa para arrastar
+            }
+
+            const scrub = (moveEvent) => {
+                const rect = timeline.getBoundingClientRect();
+                const x = Math.max(0, Math.min(moveEvent.clientX - rect.left, rect.width));
+                const percent = x / rect.width;
+                video.currentTime = percent * video.duration;
+                // O evento 'seeked' cuidará da atualização do frame
+            };
+
+            scrub(e); // Executa no clique inicial
+
+            const onMouseMove = (moveEvent) => {
+                moveEvent.preventDefault(); // Evita seleção de texto
+                scrub(moveEvent);
+            };
+
+            const onMouseUp = () => {
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+                if (wasRunning) {
+                    document.getElementById('playBtn').click(); // Volta a tocar se estava tocando
+                }
+            };
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        };
+
+        function updateTimeline() {
+            const markersDiv = document.getElementById('markers');
+            markersDiv.innerHTML = '';
+            
+            if (selectedIdx !== -1 && attachedObjects.has(selectedIdx)) {
+                let obj = attachedObjects.get(selectedIdx);
+                obj.keyframes.forEach(k => {
+                    if (video.duration) {
+                        const el = document.createElement('div');
+                        el.className = 'keyframe-marker';
+                        el.style.left = (k.time / video.duration * 100) + '%';
+                        markersDiv.appendChild(el);
+                    }
+                });
+            }
+        }
+
+        document.getElementById('clearBtn').onclick = () => {
+            attachedObjects.clear();
+            selectedIdx = -1;
+            updateTimeline();
+            resetSystem();
+        };
+
+        function loop() {
+            if (!isRunning) return;
+
+            try {
+                cap.read(frame);
+                cv.cvtColor(frame, frameGray, cv.COLOR_RGBA2GRAY);
+
+                if (!p0.empty()) {
+                    // Parâmetros de LK robustos: winSize 21x21 e maxLevel 3 (Pirâmides)
+                    let winSize = new cv.Size(21, 21);
+                    let criteria = new cv.TermCriteria(cv.TermCriteria_EPS | cv.TermCriteria_COUNT, 30, 0.01);
+                    
+                    cv.calcOpticalFlowPyrLK(oldGray, frameGray, p0, p1, st, err, winSize, 3, criteria);
+
+                    // ATUALIZAÇÃO ESTÁTICA: Copia p1 para p0 sem mudar o tamanho da matriz
+                    // Isso garante que o índice 5 de p0 seja sempre o mesmo objeto físico
+                    for (let i = 0; i < st.rows; i++) {
+                        if (st.data[i] === 1) {
+                            p0.data32F[i * 2] = p1.data32F[i * 2];
+                            p0.data32F[i * 2 + 1] = p1.data32F[i * 2 + 1];
+                        }
+                    }
+                }
+                
+                // Salva histórico do rastreamento
+                if (isRunning) {
+                    trackerHistory.push({
+                        time: video.currentTime,
+                        p0: p0.data32F.slice(),
+                        st: st.data.slice()
+                    });
+                }
+
+                render();
+                frameGray.copyTo(oldGray);
+                requestAnimationFrame(loop);
+
+            } catch (e) {
+                console.error("Erro no rastreamento: ", e);
+                isRunning = false;
+            }
+        }
+    </script>
+</body>
+</html>

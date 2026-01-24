@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Extrator de Frames PNG Transparente</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+            color: #e0e0e0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .container {
+            width: 100%;
+            max-width: 500px;
+            background: #1e1e1e;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            border: 1px solid #333;
+        }
+        h2 { text-align: center; margin-top: 0; color: #fff; }
+        .controls { display: flex; flex-direction: column; gap: 15px; }
+        label { color: #bbb; font-size: 0.9em; }
+        input {
+            padding: 12px;
+            border-radius: 6px;
+            border: 1px solid #444;
+            background-color: #2c2c2c;
+            color: #fff;
+            outline: none;
+        }
+        input:focus { border-color: #777; }
+        button {
+            padding: 12px;
+            border-radius: 6px;
+            background-color: #e0e0e0;
+            color: #121212;
+            border: none;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.3s;
+            margin-top: 10px;
+        }
+        button:hover { background-color: #ffffff; }
+        #status { margin-top: 20px; color: #888; font-size: 0.9em; text-align: center; }
+        .progress-bar {
+            height: 6px;
+            background: #333;
+            border-radius: 3px;
+            overflow: hidden;
+            display: none;
+            margin-top: 15px;
+        }
+        #progressInner { height: 100%; background: #e0e0e0; width: 0%; transition: width 0.1s; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Extrator de Frames (PNG)</h2>
+    <div class="controls">
+        <label>Selecione o Vídeo:</label>
+        <input type="file" id="videoInput" accept="video/*">
+        
+        <label>Frames por segundo:</label>
+        <input type="number" id="fpsInput" value="1" min="0.1" step="0.1">
+
+        <button id="startBtn">Selecionar Pasta e Iniciar Extração</button>
+    </div>
+
+    <div id="status">Aguardando início...</div>
+    <div class="progress-bar" id="progressWrapper">
+        <div id="progressInner"></div>
+    </div>
+</div>
+
+<video id="preview" style="display:none;"></video>
+<canvas id="canvas" style="display:none;"></canvas>
+
+<script>
+    const videoInput = document.getElementById('videoInput');
+    const startBtn = document.getElementById('startBtn');
+    const status = document.getElementById('status');
+    const video = document.getElementById('preview');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d', { alpha: true }); // Garante contexto com transparência
+    const progressWrapper = document.getElementById('progressWrapper');
+    const progressInner = document.getElementById('progressInner');
+
+    startBtn.addEventListener('click', async () => {
+        if (!videoInput.files[0]) return alert("Por favor, selecione um vídeo.");
+
+        try {
+            // Solicita acesso à pasta
+            const dirHandle = await window.showDirectoryPicker();
+            
+            const file = videoInput.files[0];
+            video.src = URL.createObjectURL(file);
+            
+            video.onloadedmetadata = async () => {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                
+                const duration = video.duration;
+                const fps = parseFloat(document.getElementById('fpsInput').value);
+                const interval = 1 / fps;
+                
+                let currentTime = 0;
+                let frameCount = 0;
+
+                progressWrapper.style.display = 'block';
+                status.innerText = "Iniciando processamento...";
+
+                while (currentTime < duration) {
+                    video.currentTime = currentTime;
+                    
+                    await new Promise(resolve => video.onseeked = resolve);
+
+                    // Limpa o canvas antes de desenhar o próximo frame (essencial para transparência)
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    
+                    // Exporta como PNG (suporta transparência)
+                    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+                    
+                    const fileName = `frame_${String(frameCount).padStart(5, '0')}.png`;
+                    const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
+                    const writable = await fileHandle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+
+                    currentTime += interval;
+                    frameCount++;
+                    
+                    const percent = Math.min(100, Math.round((currentTime / duration) * 100));
+                    progressInner.style.width = percent + "%";
+                    status.innerText = `Salvando frame ${frameCount} (${percent}%)`;
+                }
+
+                status.innerText = `Sucesso! ${frameCount} frames PNG salvos.`;
+            };
+        } catch (err) {
+            console.error(err);
+            status.innerText = "Erro: " + (err.name === 'AbortError' ? "Operação cancelada." : "Falha ao processar.");
+        }
+    });
+</script>
+</body>
+</html>

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>undersites</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;600;700&display=swap');
+        
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background: #050505;
+            color: white;
+            min-height: 100vh;
+            display: flex;
+            overflow-x: hidden;
+            margin: 0;
+        }
+
+        /* Imagem de Fundo SEM transparência e SEM desfoque */
+        .bg-fixed-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            /* Removido o gradiente escuro e o filtro blur */
+            background-image: url('background.png');
+            background-size: cover;
+            background-position: center;
+            z-index: -1;
+        }
+
+        /* Cards com vidro mais visível para não "sumir" na imagem de fundo */
+        .glass-item {
+            background: rgba(15, 15, 15, 0.6); /* Fundo levemente escuro para ler o texto */
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transition: all 0.4s cubic-bezier(0.23, 1, 0.32, 1);
+        }
+
+        .glass-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: #ffffff;
+            transform: scale(1.02);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .tool-icon {
+            transition: transform 0.3s ease;
+        }
+
+        .glass-item:hover .tool-icon {
+            transform: scale(1.1) rotate(5deg);
+        }
+
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-up { animation: fadeInUp 0.6s ease forwards; }
+    </style>
+</head>
+<body class="p-6">
+
+    <div class="bg-fixed-overlay"></div>
+
+    <div class="container max-w-md w-full relative z-10 flex flex-col items-center my-auto mx-auto">
+        <header class="text-center mb-12 animate-up">
+            <h1 class="text-2xl font-bold tracking-tight mb-2 drop-shadow-lg">
+                Alexandre Sites
+            </h1>
+        </header>
+
+        <div class="w-full flex flex-col gap-4 animate-up" style="animation-delay: 0.2s;">
+            
+            <!-- Link Item -->
+
+            <a href="animacao.html" class="glass-item p-4 rounded-full text-center font-semibold text-white hover:text-white group relative overflow-hidden">
+                <span class="relative z-10">2D Animation</span>
+            </a>
+
+            <a href="studio360.html" class="glass-item p-4 rounded-full text-center font-semibold text-white hover:text-white group relative overflow-hidden">
+                <span class="relative z-10">Image 360</span>
+            </a>
+
+            <a href="studio360video.html" class="glass-item p-4 rounded-full text-center font-semibold text-white hover:text-white group relative overflow-hidden">
+                <span class="relative z-10">Video 360</span>
+            </a>
+
+            <a href="studio3d.html" class="glass-item p-4 rounded-full text-center font-semibold text-white hover:text-white group relative overflow-hidden">
+                <span class="relative z-10">Studio 3D</span>
+            </a>
+
+            <a href="chromakey.html" class="glass-item p-4 rounded-full text-center font-semibold text-white hover:text-white group relative overflow-hidden">
+                <span class="relative z-10">ChromaKey</span>
+            </a>
+            
+                        <a href="videopng.html" class="glass-item p-4 rounded-full text-center font-semibold text-white hover:text-white group relative overflow-hidden">
+                <span class="relative z-10">Video para PNG</span>
+            </a>
+
+            <a href="screenrecorder.html" class="glass-item p-4 rounded-full text-center font-semibold text-white hover:text-white group relative overflow-hidden">
+                <span class="relative z-10">Screen Recorder</span>
+            </a>
+
+
+
+
+            
+        </div>
+    </div>
+
+</body>
+</html>

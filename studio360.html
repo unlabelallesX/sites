@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Fotos 3D Studio | Professional Edition</title>
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <script src="https://unpkg.com/webm-muxer@5.0.2/build/webm-muxer.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;700&display=swap" rel="stylesheet">
+    <style>
+        :root { 
+            --accent: #00f2ff; 
+            --bg: #020406; 
+            --panel: rgba(15, 20, 30, 0.7); 
+            --glass: rgba(255, 255, 255, 0.05);
+            --danger: #ff3e3e; 
+        }
+        
+        body { margin: 0; background: var(--bg); font-family: 'Inter', sans-serif; overflow: hidden; color: #fff; }
+        .a-enter-vr, .a-enter-ar { display: none !important; }
+
+        /* Viewport e Efeito de Imersão */
+        #viewport { 
+            position: absolute; top: 0; left: 0; width: 100%; height: calc(100vh - 200px); 
+            background: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; 
+        }
+        
+        #scene-wrapper { 
+            position: relative; width: 100%; height: 100%; transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        body.preview-tiktok #scene-wrapper { 
+            width: auto; height: 90%; aspect-ratio: 9 / 16; border-radius: 20px;
+            border: 2px solid var(--accent); box-shadow: 0 0 80px rgba(0, 242, 255, 0.15);
+        }
+
+        /* Interface Glassmorphism */
+        #ui-layer { 
+            position: absolute; bottom: 0; left: 0; width: 100%; height: 200px; 
+            background: var(--panel); border-top: 1px solid rgba(255,255,255,0.1); 
+            z-index: 1000; display: flex; flex-direction: column; backdrop-filter: blur(30px) saturate(150%); 
+        }
+
+        .header { 
+            padding: 8px 25px; display: flex; justify-content: space-between; align-items: center; 
+            font-size: 11px; letter-spacing: 3px; font-weight: 300; color: var(--accent);
+            background: rgba(0,0,0,0.3); border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .track { 
+            flex-grow: 1; display: flex; align-items: center; gap: 15px; padding: 10px 25px; 
+            overflow-x: auto;
+        }
+        
+        .track::-webkit-scrollbar { height: 6px; }
+        .track::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.05); border-radius: 3px; }
+        .track::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 3px; }
+        .track::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+        
+        .kf-node { 
+            min-width: 130px; height: 70px; background: var(--glass); border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; 
+            justify-content: center; font-size: 10px; cursor: pointer; position: relative; transition: 0.3s;
+        }
+        .kf-node:hover { background: rgba(255,255,255,0.1); border-color: var(--accent); }
+        .node-del { 
+            position: absolute; top: -8px; right: -8px; width: 22px; height: 22px; 
+            background: var(--danger); border-radius: 50%; display: flex; align-items: center; 
+            justify-content: center; font-weight: bold; font-size: 12px; cursor: pointer;
+        }
+
+        .controls { 
+            padding: 15px 25px; display: flex; gap: 12px; align-items: center; 
+            background: rgba(0,0,0,0.4); 
+        }
+
+        .btn { 
+            background: var(--glass); border: 1px solid rgba(255,255,255,0.1); color: #fff; 
+            padding: 10px 18px; border-radius: 8px; cursor: pointer; font-size: 11px; 
+            font-weight: 600; text-transform: uppercase; transition: all 0.2s;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .btn:hover { background: rgba(255,255,255,0.15); transform: translateY(-2px); }
+        .btn.active { background: var(--accent); color: #000; border-color: var(--accent); }
+        
+        .btn-render { background: linear-gradient(45deg, #ff3e3e, #ff0055); border: none; padding: 12px 25px; }
+
+        /* Curte de Render */
+        #render-curtain { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: radial-gradient(circle at center, #0a0e14, #000); 
+            z-index: 9999; display: none; flex-direction: column; align-items: center; justify-content: center; 
+        }
+        .loader { width: 400px; height: 2px; background: rgba(255,255,255,0.05); margin-top: 30px; border-radius: 2px; }
+        .loader-bar { width: 0%; height: 100%; background: var(--accent); box-shadow: 0 0 15px var(--accent); }
+    </style>
+</head>
+<body class="preview-yt">
+
+    <div id="render-curtain">
+        <h2 style="letter-spacing: 15px; font-weight: 300; margin: 0;">STUDIO 360 PRO</h2>
+        <div id="render-status" style="color: #666; font-size: 12px; margin-top: 15px; font-family: monospace;">Iniciando motor de renderização...</div>
+        <div class="loader"><div class="loader-bar" id="bar"></div></div>
+    </div>
+
+    <div id="viewport">
+        <div id="scene-wrapper">
+            <a-scene embedded vr-mode-ui="enabled: false" 
+                     renderer="antialias: true; preserveDrawingBuffer: true; colorManagement: true; exposure: 1.2; toneMapping: ACESFilmic;">
+                
+                <a-assets>
+                    <img id="sky-tex" src="">
+                </a-assets>
+
+                <a-sky id="world" radius="5000" material="shader: flat; npot: true; color: #111" rotation="0 -90 0"></a-sky>
+                
+                <a-entity light="type: ambient; intensity: 1.0"></a-entity>
+
+                <a-entity id="rig" position="0 1.6 0">
+                    <a-entity id="cam" camera="fov: 90; far: 10000; near: 0.1" look-controls="pointerLockEnabled: true; reverseMouseDrag: false"></a-entity>
+                </a-entity>
+            </a-scene>
+        </div>
+    </div>
+
+    <div id="ui-layer">
+        <div class="header">
+            <span>FOTOS 3D STUDIO // ULTIMATE ENGINE</span>
+            <span id="pos-debug" style="color: var(--accent); font-family: monospace;">POS: 0.0, 1.6, 0.0 | FOV: 90</span>
+        </div>
+        
+        <div class="track" id="track-list">
+            <span style="opacity:0.3; font-size: 10px;">ADICIONE PONTOS DE CÂMERA PARA CRIAR O MOVIMENTO</span>
+        </div>
+
+        <div class="controls">
+            <label for="f-up" class="btn"><span>📁</span> Abrir 360</label>
+            <input type="file" id="f-up" accept="image/*" style="display:none">
+            
+            <button class="btn" id="add-kf" style="background: rgba(0, 242, 255, 0.15); color: var(--accent); border-color: var(--accent);">+ Novo Keyframe</button>
+            <button class="btn" id="take-photo">📸 Snapshot</button>
+            
+            <div style="display: flex; gap: 2px; background: rgba(255,255,255,0.05); padding: 4px; border-radius: 10px;">
+                <button class="btn active" id="btn-yt" onclick="setFormat('yt')">16:9</button>
+                <button class="btn" id="btn-tiktok" onclick="setFormat('tiktok')">9:16</button>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 8px; margin-left: 10px; background: rgba(0,0,0,0.3); padding: 8px 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+                <span style="font-size: 10px; color: #666;">VELOCIDADE (S):</span>
+                <input type="number" id="kf-duration" value="5" min="1" step="0.5" style="width: 40px; background: transparent; border: none; color: var(--accent); font-weight: bold; outline: none;">
+            </div>
+
+            <div style="flex-grow: 1;"></div>
+            <button class="btn" id="play-btn">▶ Preview</button>
+            <button class="btn btn-render" id="render-btn">🔴 Exportar Full HD</button>
+        </div>
+    </div>
+
+    <script>
+        const rig = document.getElementById('rig'), 
+              cam = document.getElementById('cam'), 
+              scene = document.querySelector('a-scene'),
+              debug = document.getElementById('pos-debug');
+        
+        let keyframes = [], keys = {}, selectedFormat = 'yt', currentFOV = 90;
+
+        window.addEventListener('wheel', (e) => {
+            if (scene.is('rendering')) return;
+            currentFOV = Math.min(Math.max(currentFOV + (e.deltaY * 0.05), 15), 145);
+            cam.setAttribute('camera', 'fov', currentFOV);
+            updateDebug();
+        }, { passive: true });
+
+        function updateDebug() {
+            const pos = rig.object3D.position;
+            debug.innerText = `POS: ${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)} | FOV: ${currentFOV.toFixed(0)}°`;
+        }
+
+        scene.addEventListener('mousedown', () => {
+            if(!scene.is('rendering')) scene.canvas.requestPointerLock();
+        });
+
+        window.addEventListener('keydown', (e) => { keys[e.code] = true; });
+        window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+        function moveLoop() {
+            if (scene.is('rendering')) return requestAnimationFrame(moveLoop);
+            const pos = rig.object3D.position;
+            const rot = cam.object3D.rotation;
+            let speed = keys['ShiftLeft'] ? 15.0 : 5.0;
+
+            if (keys['KeyW']) { pos.x -= Math.sin(rot.y) * speed; pos.z -= Math.cos(rot.y) * speed; }
+            if (keys['KeyS']) { pos.x += Math.sin(rot.y) * speed; pos.z += Math.cos(rot.y) * speed; }
+            if (keys['KeyA']) { pos.x -= Math.cos(rot.y) * speed; pos.z += Math.sin(rot.y) * speed; }
+            if (keys['KeyD']) { pos.x += Math.cos(rot.y) * speed; pos.z -= Math.sin(rot.y) * speed; }
+            if (keys['KeyE']) pos.y += speed;
+            if (keys['KeyQ']) pos.y -= speed;
+            
+            updateDebug();
+            requestAnimationFrame(moveLoop);
+        }
+        moveLoop();
+
+        function setFormat(fmt) {
+            selectedFormat = fmt;
+            document.getElementById('btn-yt').classList.toggle('active', fmt === 'yt');
+            document.getElementById('btn-tiktok').classList.toggle('active', fmt === 'tiktok');
+            document.body.className = (fmt === 'tiktok') ? 'preview-tiktok' : 'preview-yt';
+            setTimeout(() => scene.resize(), 500);
+        }
+
+        document.getElementById('f-up').onchange = (e) => {
+            const r = new FileReader();
+            r.onload = (ev) => { 
+                document.getElementById('world').setAttribute('src', ev.target.result); 
+                document.getElementById('world').setAttribute('material', 'color', '#fff'); 
+            };
+            r.readAsDataURL(e.target.files[0]);
+        };
+
+        document.getElementById('add-kf').onclick = () => {
+            const look = cam.components['look-controls'];
+            keyframes.push({
+                pos: {...rig.object3D.position},
+                rot: { 
+                    x: THREE.MathUtils.radToDeg(look.pitchObject.rotation.x), 
+                    y: THREE.MathUtils.radToDeg(look.yawObject.rotation.y) 
+                },
+                fov: currentFOV
+            });
+            renderUI();
+        };
+
+        function renderUI() {
+            const list = document.getElementById('track-list');
+            list.innerHTML = keyframes.length ? '' : '<span style="opacity:0.3; font-size: 10px;">PONTOS DE CÂMERA VAZIOS</span>';
+            keyframes.forEach((kf, i) => {
+                const node = document.createElement('div');
+                node.className = 'kf-node';
+                node.innerHTML = `<div class="node-del" onclick="event.stopPropagation(); keyframes.splice(${i},1); renderUI();">×</div><b style="color:var(--accent)">POS ${i+1}</b><span>FOV: ${kf.fov.toFixed(0)}°</span>`;
+                node.onclick = () => {
+                    gsap.to(rig.object3D.position, { ...kf.pos, duration: 1, ease: "power2.out" });
+                    const look = cam.components['look-controls'];
+                    look.pitchObject.rotation.x = THREE.MathUtils.degToRad(kf.rot.x);
+                    look.yawObject.rotation.y = THREE.MathUtils.degToRad(kf.rot.y);
+                    currentFOV = kf.fov;
+                    cam.setAttribute('camera', 'fov', currentFOV);
+                };
+                list.appendChild(node);
+            });
+        }
+
+        function createTimeline() {
+            if (keyframes.length < 2) return null;
+            const tl = gsap.timeline({ paused: true });
+            const duration = parseFloat(document.getElementById('kf-duration').value) || 5;
+            
+            keyframes.forEach((kf, i) => {
+                if (i === 0) {
+                    tl.set(rig.object3D.position, kf.pos);
+                    tl.set(cam.object3D.rotation, { x: THREE.MathUtils.degToRad(kf.rot.x), y: THREE.MathUtils.degToRad(kf.rot.y) });
+                    cam.setAttribute('camera', 'fov', kf.fov);
+                } else {
+                    tl.to(rig.object3D.position, { ...kf.pos, duration: duration, ease: "none" });
+                    tl.to(cam.object3D.rotation, { 
+                        x: THREE.MathUtils.degToRad(kf.rot.x), 
+                        y: THREE.MathUtils.degToRad(kf.rot.y), 
+                        duration: duration, 
+                        ease: "none" 
+                    }, "<");
+                    
+                    let fovProxy = { val: keyframes[i-1].fov };
+                    tl.to(fovProxy, { 
+                        val: kf.fov, duration: duration, ease: "none",
+                        onUpdate: () => cam.setAttribute('camera', 'fov', fovProxy.val)
+                    }, "<");
+                }
+            });
+            return tl;
+        }
+
+        document.getElementById('play-btn').onclick = () => {
+            const tl = createTimeline();
+            if(!tl) return;
+            cam.setAttribute('look-controls', 'enabled', false);
+            tl.play();
+            tl.eventCallback("onComplete", () => cam.setAttribute('look-controls', 'enabled', true));
+        };
+
+        document.getElementById('render-btn').onclick = async () => {
+            const tl = createTimeline();
+            if (!tl) return alert("Crie pelo menos 2 keyframes!");
+
+            scene.addState('rendering');
+            const curtain = document.getElementById('render-curtain'), 
+                  bar = document.getElementById('bar'),
+                  status = document.getElementById('render-status');
+            curtain.style.display = 'flex';
+            
+            // ALTERADO PARA FULL HD (1080p)
+            const exportW = (selectedFormat === 'tiktok') ? 1080 : 1920; 
+            const exportH = (selectedFormat === 'tiktok') ? 1920 : 1080;
+            
+            const renderer = scene.renderer;
+            
+            // Salva tamanho original para restaurar depois
+            const originalSize = new THREE.Vector2();
+            renderer.getSize(originalSize);
+            
+            renderer.setSize(exportW, exportH, false);
+            
+            const cameraEl = cam.getObject3D('camera');
+            const originalAspect = cameraEl.aspect;
+            cameraEl.aspect = exportW / exportH;
+            cameraEl.updateProjectionMatrix();
+
+            try {
+                const fps = 60;
+                const totalFrames = Math.ceil(tl.duration() * fps);
+                const muxer = new WebMMuxer.Muxer({
+                    target: new WebMMuxer.ArrayBufferTarget(),
+                    video: { codec: 'V_VP9', width: exportW, height: exportH, frameRate: fps }
+                });
+
+                const videoEncoder = new VideoEncoder({
+                    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+                    error: e => console.error(e)
+                });
+
+                videoEncoder.configure({
+                    codec: 'vp09.00.10.08', width: exportW, height: exportH,
+                    bitrate: 12_000_000 // Otimizado para 1080p
+                });
+
+                scene.pause();
+
+                for (let i = 0; i < totalFrames; i++) {
+                    tl.seek(i / fps, false);
+                    renderer.render(scene.object3D, cameraEl);
+                    
+                    const bitmap = await createImageBitmap(renderer.domElement);
+                    const frame = new VideoFrame(bitmap, { timestamp: (i * 1000000) / fps });
+                    
+                    // Evita estouro de memória na fila de encode
+                    if (videoEncoder.encodeQueueSize > 5) {
+                        await videoEncoder.flush();
+                    }
+
+                    videoEncoder.encode(frame, { keyFrame: i % 60 === 0 });
+                    frame.close();
+                    bitmap.close();
+
+                    const progress = Math.round((i / totalFrames) * 100);
+                    bar.style.width = `${progress}%`;
+                    status.innerText = `PROCESSANDO FRAME ${i} DE ${totalFrames} (${progress}%)`;
+                    await new Promise(r => setTimeout(r, 0));
+                }
+
+                await videoEncoder.flush();
+                muxer.finalize();
+                
+                const blob = new Blob([muxer.target.buffer], { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `Studio360_FullHD_Render.webm`;
+                a.click();
+                
+                // Limpeza do URL object
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+            } catch (err) {
+                alert("Erro: " + err.message);
+                console.error(err);
+            } finally {
+                // Restaura o estado original SEM recarregar a página
+                renderer.setSize(originalSize.x, originalSize.y, false);
+                cameraEl.aspect = originalAspect;
+                cameraEl.updateProjectionMatrix();
+                
+                scene.play();
+                scene.removeState('rendering');
+                curtain.style.display = 'none';
+                
+                // Força resize para ajustar layout
+                scene.resize();
+            }
+        };
+    </script>
+</body>
+</html>

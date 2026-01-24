@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>ALEXANDRE STUDIO | Virtual Production Hub V3.1</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        :root { --accent: #00f2ff; --bg: #05070a; --panel: #0a0a0a; --text: #e0e0e0; }
+        body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; overflow: hidden; display: flex; flex-direction: column; height: 100vh; }
+
+        /* HEADER & NAV */
+        #main-nav { background: #000; padding: 10px 20px; display: flex; gap: 10px; border-bottom: 1px solid #222; z-index: 1000; }
+        .nav-btn { background: #111; border: 1px solid #333; color: #888; padding: 8px 20px; cursor: pointer; font-weight: 900; font-size: 10px; text-transform: uppercase; border-radius: 4px; transition: 0.3s; }
+        .nav-btn.active { background: var(--accent); color: #000; border-color: var(--accent); }
+
+        /* TABS */
+        .tab-content { display: none; flex: 1; overflow: hidden; height: 100%; }
+        .tab-content.active { display: flex; flex-direction: column; }
+
+        /* TOOLBAR */
+        .toolbar { background: var(--panel); padding: 12px 25px; display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid var(--accent); }
+        .studio-brand { font-weight: 900; letter-spacing: 2px; font-size: 14px; text-transform: uppercase; }
+        .studio-brand span { color: var(--accent); }
+        .btn-group { display: flex; gap: 15px; align-items: center; }
+        
+        .btn { padding: 8px 12px; border-radius: 4px; font-weight: 700; cursor: pointer; border: 1px solid #333; font-size: 9px; text-transform: uppercase; background: #111; color: #fff; }
+        .btn:hover { background: var(--accent); color: #000; }
+        .btn-main { background: var(--accent); color: #000; border: none; font-weight: 900; }
+
+        /* INPUTS & SLIDERS */
+        .slider-container { display: flex; flex-direction: column; gap: 2px; }
+        .label-tag { font-size: 8px; color: var(--accent); font-weight: bold; text-transform: uppercase; }
+        input[type="range"] { width: 100px; height: 6px; cursor: pointer; }
+
+        /* VIEWPORTS */
+        .split-view { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 15px; background: #000; }
+        .view-box { position: relative; border: 1px solid #222; display: flex; justify-content: center; align-items: center; background: #080808; overflow: hidden; }
+        .view-box label { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.8); padding: 4px 8px; font-size: 9px; color: var(--accent); border: 1px solid var(--accent); z-index: 5; }
+        canvas { max-width: 100%; max-height: 100%; object-fit: contain; }
+        #viewport-3d { flex: 1; background: radial-gradient(circle, #111 0%, #000 100%); cursor: grab; }
+    </style>
+</head>
+<body>
+
+<nav id="main-nav">
+    <button class="nav-btn active" onclick="showTab('depth-tab')">1. Depth Engine</button>
+    <button class="nav-btn" onclick="showTab('normal-tab')">2. Normal Studio</button>
+    <button class="nav-btn" onclick="showTab('studio-tab')">3. 3D Preview</button>
+    <button class="nav-btn" onclick="showTab('equi-tab')">4. 4K Converter</button>
+</nav>
+
+<div id="depth-tab" class="tab-content active">
+    <div class="toolbar">
+        <div class="studio-brand">DEPTH <span>MATH V3</span></div>
+        <div class="btn-group">
+            <label class="btn">UPLOAD FOTO<input type="file" onchange="loadImg(event, 'depth')" style="display:none"></label>
+            <div class="slider-container"><span class="label-tag">Gama (Curva)</span><input type="range" id="d-gamma" min="0.1" max="4" value="1" step="0.1" oninput="runDepth()"></div>
+            <div class="slider-container"><span class="label-tag">Offset (Brilho)</span><input type="range" id="d-offset" min="-100" max="100" value="0" oninput="runDepth()"></div>
+            <div class="slider-container"><span class="label-tag">Blur</span><input type="range" id="d-blur" min="0" max="15" value="2" oninput="runDepth()"></div>
+            <div class="slider-container"><span class="label-tag">Inverter</span><input type="checkbox" id="d-invert" onchange="runDepth()"></div>
+            <button class="btn btn-main" onclick="downloadCanvas('canvas-depth', 'DepthMap.png')">BAIXAR MAPA</button>
+        </div>
+    </div>
+    <div class="split-view">
+        <div class="view-box"><label>ORIGINAL</label><canvas id="canvas-depth-src"></canvas></div>
+        <div class="view-box"><label>Z-DEPTH CALCULADO</label><canvas id="canvas-depth"></canvas></div>
+    </div>
+</div>
+
+<div id="normal-tab" class="tab-content">
+    <div class="toolbar">
+        <div class="studio-brand">NORMAL <span>CHANNEL</span></div>
+        <div class="btn-group">
+            <label class="btn">UPLOAD FOTO<input type="file" onchange="loadImg(event, 'normal')" style="display:none"></label>
+            <div class="slider-container"><span class="label-tag">Força Sobel</span><input type="range" id="n-strength" min="0.1" max="8" value="2" step="0.1" oninput="runNormal()"></div>
+            <button class="btn btn-main" onclick="downloadCanvas('canvas-normal', 'NormalMap.png')">BAIXAR MAPA</button>
+        </div>
+    </div>
+    <div class="split-view">
+        <div class="view-box"><label>ORIGINAL</label><canvas id="canvas-normal-src"></canvas></div>
+        <div class="view-box"><label>TEXTURA NORMAL</label><canvas id="canvas-normal"></canvas></div>
+    </div>
+</div>
+
+<div id="studio-tab" class="tab-content">
+    <div class="toolbar">
+        <div class="studio-brand">PREVIEW <span>3D PBR</span></div>
+        <div class="btn-group">
+            <label class="btn">TEXTURE<input type="file" id="in-color" style="display:none"></label>
+            <label class="btn">DEPTH<input type="file" id="in-depth" style="display:none"></label>
+            <label class="btn">NORMAL<input type="file" id="in-norm" style="display:none"></label>
+            <div class="slider-container"><span class="label-tag">Displacement</span><input type="range" id="s-vol" min="-5" max="5" value="1" step="0.01"></div>
+            <div class="slider-container"><span class="label-tag">Normal Str</span><input type="range" id="s-norm" min="0" max="5" value="1.5" step="0.01"></div>
+            <button class="btn btn-main" id="btn-snap">SNAPSHOT 3D</button>
+        </div>
+    </div>
+    <div id="viewport-3d"></div>
+</div>
+
+<div id="equi-tab" class="tab-content">
+    <div class="toolbar">
+        <div class="studio-brand">4K <span>CONVERTER</span></div>
+        <div class="btn-group">
+            <label class="btn">UPLOAD<input type="file" onchange="loadImg(event, 'equi')" style="display:none"></label>
+            <select id="e-format" onchange="runEqui()" style="background:#111; color:var(--accent); border:1px solid #333; font-size:10px; padding:5px; font-weight:bold;">
+                <option value="3840x2160">4K UHD (16:9)</option>
+                <option value="4096x2048">4K EQUI (2:1)</option>
+                <option value="1920x1080">FULL HD (16:9)</option>
+            </select>
+            <button class="btn btn-main" onclick="downloadCanvas('canvas-equi', 'Converted_4K.png')">BAIXAR IMAGEM</button>
+        </div>
+    </div>
+    <div class="split-view">
+        <div class="view-box"><label>ORIGINAL</label><canvas id="canvas-equi-src"></canvas></div>
+        <div class="view-box"><label>OUTPUT 4K</label><canvas id="canvas-equi"></canvas></div>
+    </div>
+</div>
+
+<script type="module">
+    import { OrbitControls } from 'https://cdn.skypack.dev/three@0.132.2/examples/jsm/controls/OrbitControls.js';
+
+    // Navegação Global
+    window.showTab = (tabId) => {
+        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById(tabId).classList.add('active');
+        event.currentTarget.classList.add('active');
+        if(tabId === 'studio-tab') {
+            setTimeout(() => { window.dispatchEvent(new Event('resize')); }, 50);
+        }
+    };
+
+    // Load Image Engine
+    window.loadImg = (e, type) => {
+        const file = e.target.files[0];
+        if(!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            const img = new Image();
+            img.onload = () => {
+                const c = document.getElementById(`canvas-${type}-src`);
+                const cOut = document.getElementById(`canvas-${type}`);
+                if(c && cOut) {
+                    c.width = cOut.width = img.width;
+                    c.height = cOut.height = img.height;
+                    c.getContext('2d').drawImage(img, 0, 0);
+                    if(type === 'depth') runDepth(); 
+                    else if(type === 'normal') runNormal();
+                    else if(type === 'equi') runEqui();
+                }
+            };
+            img.src = ev.target.result;
+        };
+        reader.readAsDataURL(file);
+    };
+
+    // Depth Engine Core
+    window.runDepth = () => {
+        const cIn = document.getElementById('canvas-depth-src'), cOut = document.getElementById('canvas-depth');
+        if(!cIn || !cIn.width) return;
+        const ctx = cIn.getContext('2d'), ctxOut = cOut.getContext('2d');
+        const data = ctx.getImageData(0,0,cIn.width,cIn.height).data;
+        const outData = ctxOut.createImageData(cIn.width, cIn.height);
+        
+        const gamma = parseFloat(document.getElementById('d-gamma').value);
+        const offset = parseInt(document.getElementById('d-offset').value);
+        const invert = document.getElementById('d-invert').checked;
+
+        for (let i = 0; i < data.length; i += 4) {
+            let lum = (0.2126 * data[i] + 0.7152 * data[i+1] + 0.0722 * data[i+2]);
+            lum = 255 * Math.pow(lum / 255, gamma) + offset;
+            if(invert) lum = 255 - lum;
+            lum = Math.min(255, Math.max(0, lum));
+            outData.data[i] = outData.data[i+1] = outData.data[i+2] = lum;
+            outData.data[i+3] = 255;
+        }
+        ctxOut.putImageData(outData, 0, 0);
+        const blur = document.getElementById('d-blur').value;
+        if(blur > 0) { ctxOut.filter = `blur(${blur}px)`; ctxOut.drawImage(cOut, 0, 0); ctxOut.filter = 'none'; }
+    };
+
+    // Normal Map Engine (Sobel)
+    window.runNormal = () => {
+        const cIn = document.getElementById('canvas-normal-src'), cOut = document.getElementById('canvas-normal');
+        if(!cIn.width) return;
+        const ctxOut = cOut.getContext('2d');
+        const src = cIn.getContext('2d').getImageData(0,0,cIn.width,cIn.height).data;
+        const out = ctxOut.createImageData(cIn.width, cIn.height);
+        const str = document.getElementById('n-strength').value;
+        const w = cIn.width, h = cIn.height;
+
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const i = (y * w + x) * 4;
+                const getL = (ox, oy) => {
+                    const idx = (Math.max(0, Math.min(h-1, y+oy)) * w + Math.max(0, Math.min(w-1, x+ox))) * 4;
+                    return (src[idx] + src[idx+1] + src[idx+2])/3;
+                };
+                const nx = -(getL(1,0)-getL(-1,0))/255*str, ny = -(getL(0,1)-getL(0,-1))/255*str;
+                const mag = Math.sqrt(nx*nx + ny*ny + 1);
+                out.data[i] = (nx/mag*0.5+0.5)*255; out.data[i+1] = (ny/mag*0.5+0.5)*255; out.data[i+2] = (1/mag)*255; out.data[i+3] = 255;
+            }
+        }
+        ctxOut.putImageData(out, 0, 0);
+    };
+
+    window.runEqui = () => {
+        const cSrc = document.getElementById('canvas-equi-src'), cOut = document.getElementById('canvas-equi');
+        if(!cSrc.width) return;
+        const fmt = document.getElementById('e-format').value.split('x');
+        cOut.width = parseInt(fmt[0]); cOut.height = parseInt(fmt[1]);
+        const ctx = cOut.getContext('2d');
+        ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(cSrc, 0, 0, cOut.width, cOut.height);
+    };
+
+    window.downloadCanvas = (id, name) => {
+        const link = document.createElement('a');
+        link.download = name; link.href = document.getElementById(id).toDataURL(); link.click();
+    };
+
+    // --- MOTOR 3D REESTRUTURADO ---
+    const viewport = document.getElementById('viewport-3d');
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    viewport.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 2000);
+    camera.position.set(0, 0, 15);
+
+    // Iluminação Profissional
+    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+    const sun = new THREE.PointLight(0xffffff, 1);
+    sun.position.set(10, 10, 10);
+    scene.add(sun);
+
+    const geo = new THREE.PlaneGeometry(16, 9, 512, 512);
+    const mat = new THREE.MeshStandardMaterial({ 
+        color: 0xffffff, 
+        displacementScale: 1,
+        normalScale: new THREE.Vector2(1.5, 1.5),
+        metalness: 0,
+        roughness: 1
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    scene.add(mesh);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    window.addEventListener('resize', () => {
+        const w = viewport.clientWidth, h = viewport.clientHeight;
+        renderer.setSize(w, h);
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+    });
+
+    const texLoader = new THREE.TextureLoader();
+    const updateTexture = (inputId, mapType) => {
+        document.getElementById(inputId).onchange = e => {
+            const url = URL.createObjectURL(e.target.files[0]);
+            texLoader.load(url, t => {
+                mat[mapType] = t;
+                mat.needsUpdate = true;
+            });
+        };
+    };
+
+    updateTexture('in-color', 'map');
+    updateTexture('in-depth', 'displacementMap');
+    updateTexture('in-norm', 'normalMap');
+
+    document.getElementById('s-vol').oninput = e => mat.displacementScale = parseFloat(e.target.value);
+    document.getElementById('s-norm').oninput = e => {
+        const v = parseFloat(e.target.value);
+        mat.normalScale.set(v, v);
+    };
+
+    document.getElementById('btn-snap').onclick = () => {
+        renderer.render(scene, camera);
+        const link = document.createElement('a');
+        link.download = 'Alexandre_Snapshot_3D.png';
+        link.href = renderer.domElement.toDataURL('image/png');
+        link.click();
+    };
+
+    function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+    }
+    animate();
+</script>
+</body>
+</html>

@@ -1,0 +1,1038 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alexandre Chroma Key Studio - Foto & Vídeo</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+        body { font-family: 'Inter', sans-serif; background-color: #121212; color: #e0e0e0; }
+
+        /* Checkerboard Background */
+        .bg-checkerboard {
+            /* Fundo verde padrão para chroma key */
+            background-color: #00ff00;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1a1a1a; }
+        ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #555; }
+
+        /* Range Slider Styling */
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            background: transparent;
+            height: 16px;
+            cursor: pointer;
+            margin: 5px 0;
+        }
+        input[type="range"]:focus { outline: none; }
+        input[type="range"]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            background: #333;
+            border-radius: 2px;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            height: 14px;
+            width: 14px;
+            border-radius: 50%;
+            background: #3b82f6;
+            margin-top: -5px;
+            border: 2px solid #1a1a1a;
+            box-shadow: 0 0 5px rgba(0,0,0,0.5);
+            transition: transform 0.1s;
+        }
+        input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.2); background: #60a5fa; }
+
+        /* Input Number Styling */
+        input[type="number"] {
+            background: #262626;
+            border: 1px solid #333;
+            color: #3b82f6;
+            font-family: monospace;
+            font-size: 11px;
+            padding: 2px 4px;
+            border-radius: 3px;
+            width: 50px;
+            text-align: right;
+        }
+        input[type="number"]:focus { outline: none; border-color: #3b82f6; }
+
+        .control-group { margin-bottom: 14px; }
+        .control-label { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; font-size: 11px; color: #aaa; font-weight: 500; }
+        
+        .accordion-header { cursor: pointer; padding: 8px 0; border-top: 1px solid #333; display: flex; justify-content: space-between; align-items: center; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #888; }
+        .accordion-header:hover { color: #fff; }
+        .accordion-content { display: none; padding-bottom: 10px; }
+        .accordion-content.active { display: block; }
+        .fa-chevron-down { transition: transform 0.2s; }
+        .active .fa-chevron-down { transform: rotate(180deg); }
+
+    </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden bg-[#0d0d0d]">
+
+    <!-- Header -->
+    <header class="h-12 bg-[#1a1a1a] border-b border-[#333] flex items-center justify-between px-4 shrink-0 z-20">
+        <div class="flex items-center gap-3">
+            <i class="fas fa-layer-group text-blue-500"></i>
+            <span class="font-bold text-sm tracking-wide text-gray-200">KEYLIGHT <span class="font-normal text-gray-500">STUDIO</span></span>
+        </div>
+        <div class="flex items-center gap-3">
+            <button id="btnExportImage" class="text-xs bg-gray-700 hover:bg-gray-600 text-white px-3 py-1.5 rounded transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                <i class="fas fa-camera"></i> Salvar Foto
+            </button>
+            <button id="btnExportVideo" class="text-xs bg-blue-700 hover:bg-blue-600 text-white px-3 py-1.5 rounded transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                <i class="fas fa-video"></i> Exportar Vídeo
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="flex-1 flex overflow-hidden relative">
+        
+        <!-- Overlay Render -->
+        <div id="exportOverlay" class="absolute inset-0 bg-black/90 z-50 hidden flex-col items-center justify-center">
+            <div class="w-80 text-center space-y-4">
+                <div class="relative w-16 h-16 mx-auto">
+                    <div class="absolute inset-0 border-4 border-gray-700 rounded-full"></div>
+                    <div class="absolute inset-0 border-4 border-blue-500 rounded-full border-t-transparent animate-spin"></div>
+                </div>
+                <h2 class="text-lg font-bold text-white">Renderizando Vídeo...</h2>
+                <div class="w-full bg-gray-800 h-1.5 rounded-full overflow-hidden">
+                    <div id="progressBar" class="bg-blue-500 h-full w-0 transition-all duration-100"></div>
+                </div>
+                <p id="progressText" class="text-xs font-mono text-blue-400">0%</p>
+                <button id="cancelExportBtn" class="text-xs text-red-400 hover:text-red-300 underline mt-2">Cancelar</button>
+            </div>
+        </div>
+
+        <!-- Viewer -->
+        <section class="flex-1 bg-[#0d0d0d] relative flex flex-col min-w-0 h-full">
+            
+            <!-- View Options Toolbar -->
+            <div class="absolute top-4 left-1/2 -translate-x-1/2 bg-[#1f1f1f]/90 backdrop-blur px-3 py-1.5 rounded border border-[#333] flex gap-4 z-30 shadow-lg">
+                <button id="viewFinal" class="view-btn text-[10px] font-bold text-blue-400 border-b-2 border-blue-400 px-1">FINAL RESULT</button>
+                <button id="viewMatte" class="view-btn text-[10px] font-bold text-gray-400 hover:text-white px-1">SCREEN MATTE</button>
+                <button id="viewSource" class="view-btn text-[10px] font-bold text-gray-400 hover:text-white px-1">SOURCE</button>
+            </div>
+
+            <!-- Viewport Area -->
+            <div class="flex-1 relative overflow-hidden w-full bg-[#111]">
+                
+                <!-- Empty State -->
+                <div id="emptyState" class="absolute inset-0 flex flex-col items-center justify-center select-none pointer-events-none z-10">
+                    <div class="w-16 h-16 border border-dashed border-gray-600 rounded flex items-center justify-center mb-3 text-gray-600">
+                        <i class="fas fa-plus text-xl"></i>
+                    </div>
+                    <p class="text-gray-500 text-xs">Arraste Vídeo ou Foto aqui</p>
+                </div>
+
+                <!-- Canvas Container -->
+                <div id="canvasContainer" class="absolute inset-0 flex items-center justify-center hidden overflow-hidden p-8">
+                    <div id="canvasWrapper" class="relative transition-transform duration-200 ease-out flex items-center justify-center origin-center max-w-full max-h-full bg-checkerboard">
+                        <canvas id="outputCanvas" class="block shadow-2xl border border-[#333] bg-transparent" 
+                                style="max-width: 100%; max-height: 100%; object-fit: contain;">
+                        </canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Timeline / Controls -->
+            <div class="h-12 bg-[#1a1a1a] border-t border-[#333] flex items-center px-4 gap-4 shrink-0 z-20 relative">
+                <button id="playPauseBtn" class="text-gray-300 hover:text-white w-6 disabled:opacity-30"><i class="fas fa-play"></i></button>
+                <button id="restartBtn" class="text-gray-400 hover:text-white w-6 disabled:opacity-30"><i class="fas fa-undo"></i></button>
+                <span id="timeDisplay" class="text-[10px] font-mono text-gray-500 w-20 text-center">00:00:00</span>
+                
+                <!-- Timeline Bar -->
+                <div class="flex-1 h-1 bg-[#333] rounded relative cursor-pointer group" id="timelineTrack">
+                    <div id="timelinePlayhead" class="absolute top-1/2 -translate-y-1/2 left-0 w-2 h-2 bg-blue-500 rounded-full shadow opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                </div>
+
+                <div class="flex items-center gap-2 pl-4 border-l border-[#333]">
+                    <i class="fas fa-search text-[10px] text-gray-500"></i>
+                    <input type="range" id="zoomSlider" min="10" max="200" value="100" class="w-20" title="Zoom">
+                    <span id="zoomValue" class="text-[10px] font-mono text-gray-500 w-8 text-right">100%</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Properties Panel -->
+        <aside class="w-72 bg-[#1a1a1a] border-l border-[#333] flex flex-col shrink-0 z-20 text-xs">
+            <div class="p-3 border-b border-[#333] font-semibold text-gray-300 flex justify-between items-center">
+                <span>Effect Controls</span>
+                <i class="fas fa-sliders-h text-gray-500"></i>
+            </div>
+
+            <div class="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-2">
+                
+                <!-- File Input -->
+                <div class="bg-[#222] p-2 rounded border border-[#333] mb-4">
+                    <label class="block w-full cursor-pointer">
+                        <span class="sr-only">Escolher arquivo</span>
+                        <input type="file" id="fileUpload" accept="video/*,image/*" class="block w-full text-xs text-gray-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-blue-900 file:text-blue-300 hover:file:bg-blue-800"/>
+                    </label>
+                    <p class="text-[9px] text-gray-500 mt-1 text-center">Suporta Vídeos e Imagens</p>
+                </div>
+
+                <!-- Basic Settings -->
+                <div>
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Screen Color</span>
+                            <i class="fas fa-eye-dropper cursor-pointer hover:text-blue-400" id="pickScreenColor" title="Pegar cor da tela"></i>
+                        </div>
+                        <div class="flex gap-2 h-6">
+                            <div class="flex-1 bg-[#262626] rounded border border-[#333] flex items-center px-2 gap-2 relative overflow-hidden">
+                                <div id="colorPreview" class="w-3 h-3 rounded-sm shadow-sm border border-gray-600" style="background-color: #00ff00;"></div>
+                                <span id="colorHex" class="font-mono text-[10px] text-gray-400">#00FF00</span>
+                                <input type="color" id="keyColor" value="#00ff00" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Screen Gain (Força)</span>
+                            <input type="number" id="numGain" value="110" min="0" max="500">
+                        </div>
+                        <input type="range" id="rngGain" min="0" max="500" value="110">
+                    </div>
+
+                    <div class="control-group">
+                        <div class="control-label">
+                            <span>Screen Balance</span>
+                            <input type="number" id="numBalance" value="50" min="0" max="100">
+                        </div>
+                        <input type="range" id="rngBalance" min="0" max="100" value="50">
+                    </div>
+                </div>
+
+                <!-- Accordion: Garbage Matte (Recorte) -->
+                <div class="accordion-section">
+                    <div class="accordion-header" onclick="toggleAccordion(this)">
+                        <span>Garbage Matte (Recorte)</span>
+                        <i class="fas fa-chevron-down"></i>
+                    </div>
+                    <div class="accordion-content">
+                         <div class="grid grid-cols-2 gap-2">
+                             <div class="control-group mb-2">
+                                <div class="control-label"><span>Esq (Left)</span></div>
+                                <input type="range" id="rngCropLeft" min="0" max="50" value="0" class="h-2">
+                             </div>
+                             <div class="control-group mb-2">
+                                <div class="control-label"><span>Dir (Right)</span></div>
+                                <input type="range" id="rngCropRight" min="0" max="50" value="0" class="h-2">
+                             </div>
+                             <div class="control-group mb-2">
+                                <div class="control-label"><span>Topo (Top)</span></div>
+                                <input type="range" id="rngCropTop" min="0" max="50" value="0" class="h-2">
+                             </div>
+                             <div class="control-group mb-2">
+                                <div class="control-label"><span>Base (Bottom)</span></div>
+                                <input type="range" id="rngCropBottom" min="0" max="50" value="0" class="h-2">
+                             </div>
+                         </div>
+                         <p class="text-[9px] text-gray-500 mt-1">Corta bordas indesejadas.</p>
+                    </div>
+                </div>
+
+                <!-- Accordion: Screen Matte -->
+                <div class="accordion-section">
+                    <div class="accordion-header active" onclick="toggleAccordion(this)">
+                        <span>Screen Matte (Alpha)</span>
+                        <i class="fas fa-chevron-down"></i>
+                    </div>
+                    <div class="accordion-content active">
+                        <div class="control-group">
+                            <div class="control-label">
+                                <span>Clip Black (Limpar)</span>
+                                <input type="number" id="numClipBlack" value="10" min="0" max="100">
+                            </div>
+                            <input type="range" id="rngClipBlack" min="0" max="100" value="10">
+                        </div>
+
+                        <div class="control-group">
+                            <div class="control-label">
+                                <span>Clip White (Sólido)</span>
+                                <input type="number" id="numClipWhite" value="90" min="0" max="100">
+                            </div>
+                            <input type="range" id="rngClipWhite" min="0" max="100" value="90">
+                        </div>
+
+                        <!-- Alpha Gamma -->
+                        <div class="control-group">
+                            <div class="control-label text-yellow-500">
+                                <span>Alpha Gamma (Densidade)</span>
+                                <input type="number" id="numAlphaGamma" value="1.0" min="0.1" max="3.0" step="0.1">
+                            </div>
+                            <input type="range" id="rngAlphaGamma" min="0.1" max="3.0" value="1.0" step="0.1">
+                        </div>
+
+                        <div class="control-group">
+                            <div class="control-label">
+                                <span>Screen Shrink/Grow</span>
+                                <input type="number" id="numShrinkGrow" value="0" min="-20" max="20">
+                            </div>
+                            <input type="range" id="rngShrinkGrow" min="-20" max="20" value="0">
+                        </div>
+
+                        <div class="control-group">
+                            <div class="control-label">
+                                <span>Screen Pre-Blur</span>
+                                <input type="number" id="numPreBlur" value="0" min="0" max="10">
+                            </div>
+                            <input type="range" id="rngPreBlur" min="0" max="10" value="0" step="0.5">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Accordion: Despill -->
+                <div class="accordion-section">
+                    <div class="accordion-header active" onclick="toggleAccordion(this)">
+                        <span>Despill & Color</span>
+                        <i class="fas fa-chevron-down"></i>
+                    </div>
+                    <div class="accordion-content active">
+                         <div class="control-group">
+                            <div class="control-label">
+                                <span>Despill Saturation</span>
+                                <input type="number" id="numDespillSat" value="0" min="0" max="100">
+                            </div>
+                            <input type="range" id="rngDespillSat" min="0" max="100" value="0">
+                        </div>
+
+                        <div class="control-group">
+                            <div class="control-label">
+                                <span>Edge Brightness</span>
+                                <input type="number" id="numEdgeLuma" value="0" min="-50" max="50">
+                            </div>
+                            <input type="range" id="rngEdgeLuma" min="-50" max="50" value="0">
+                        </div>
+                    </div>
+                </div>
+                
+            </div>
+            
+            <div class="p-2 bg-[#111] text-[9px] text-center text-gray-600 border-t border-[#333]">
+                Keylight WebGL 2.0 (GPU Accelerated)
+            </div>
+        </aside>
+
+        <!-- Hidden Elements -->
+        <video id="sourceVideo" class="hidden" playsinline muted loop crossOrigin="anonymous"></video>
+        <canvas id="blurCanvas" class="hidden"></canvas>
+    </main>
+
+    <script>
+        // --- Referências DOM ---
+        const fileUpload = document.getElementById('fileUpload');
+        const sourceVideo = document.getElementById('sourceVideo');
+        const outputCanvas = document.getElementById('outputCanvas');
+        // WebGL Context is initialized later
+
+        const canvasContainer = document.getElementById('canvasContainer');
+        const canvasWrapper = document.getElementById('canvasWrapper');
+        const emptyState = document.getElementById('emptyState');
+
+        // UI Elements
+        const btnExportVideo = document.getElementById('btnExportVideo');
+        const btnExportImage = document.getElementById('btnExportImage');
+        const exportOverlay = document.getElementById('exportOverlay');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+        const cancelExportBtn = document.getElementById('cancelExportBtn');
+        const zoomSlider = document.getElementById('zoomSlider');
+        const zoomValue = document.getElementById('zoomValue');
+        const playPauseBtn = document.getElementById('playPauseBtn');
+        const restartBtn = document.getElementById('restartBtn');
+        const timeDisplay = document.getElementById('timeDisplay');
+        const timelineTrack = document.getElementById('timelineTrack');
+        const timelinePlayhead = document.getElementById('timelinePlayhead');
+        
+        // State
+        let sourceType = 'none'; // 'video' or 'image'
+        let sourceImage = new Image();
+        let isPlaying = false;
+        let animationFrameId;
+
+        // Views
+        const viewBtns = {
+            final: document.getElementById('viewFinal'),
+            matte: document.getElementById('viewMatte'),
+            source: document.getElementById('viewSource')
+        };
+        let currentView = 'final'; 
+
+        // Picker
+        const pickScreenColorBtn = document.getElementById('pickScreenColor');
+        const keyColorInput = document.getElementById('keyColor');
+        const colorPreview = document.getElementById('colorPreview');
+        const colorHex = document.getElementById('colorHex');
+
+        // Parameters
+        // Note: Gain/Balance/etc are normalized in the shader logic
+        const params = {
+            r: 0, g: 255, b: 0,
+            gain: 1.0,
+            balance: 0.5, // 0.0 - 1.0
+            clipBlack: 0.1,
+            clipWhite: 0.9,
+            shrinkGrow: 0.0,
+            preBlur: 0.0,
+            despillSat: 0.0,
+            edgeLuma: 0.0,
+            cropLeft: 0,
+            cropRight: 0,
+            cropTop: 0,
+            cropBottom: 0,
+            alphaGamma: 1.0
+        };
+
+        // --- WEBGL SETUP ---
+        let gl = outputCanvas.getContext('webgl', { preserveDrawingBuffer: true, premultipliedAlpha: false, alpha: false });
+        if (!gl) alert("WebGL não suportado!");
+
+        // Habilita mistura (blending) para compor a imagem sobre o fundo limpo (verde)
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+        // Shaders
+        const vsSource = `
+            attribute vec2 a_position;
+            attribute vec2 a_texCoord;
+            varying vec2 v_texCoord;
+            void main() {
+                gl_Position = vec4(a_position, 0, 1);
+                v_texCoord = a_texCoord;
+            }
+        `;
+
+        const fsSource = `
+            precision mediump float;
+            uniform sampler2D u_image;
+            uniform vec2 u_texSize;
+            uniform vec3 u_keyColor;
+            uniform float u_gain;
+            uniform float u_balance;
+            uniform float u_clipBlack;
+            uniform float u_clipWhite;
+            uniform float u_despill;
+            uniform float u_edgeLuma;
+            uniform float u_shrinkGrow;
+            uniform float u_preBlur;
+            uniform vec4 u_crop; 
+            uniform int u_viewMode;
+            varying vec2 v_texCoord;
+
+            // Função auxiliar para calcular o Alpha base (Distância da cor)
+            float calcKey(vec2 uv) {
+                vec3 rgb = texture2D(u_image, uv).rgb;
+                float dist = distance(rgb, u_keyColor);
+                float tolerance = u_balance * 0.8; 
+                float a = (dist - tolerance) * u_gain;
+                return clamp(a, 0.0, 1.0);
+            }
+
+            void main() {
+                vec2 uv = v_texCoord;
+                vec2 onePixel = vec2(1.0) / u_texSize;
+
+                // Crop
+                if (uv.x < u_crop.x || uv.x > (1.0 - u_crop.y) || 
+                    uv.y < u_crop.z || uv.y > (1.0 - u_crop.w)) {
+                    gl_FragColor = vec4(0.0);
+                    return;
+                }
+
+                // 1. Calcula Alpha Base
+                float alpha = calcKey(uv);
+
+                // 2. Pre-Blur (Suaviza a máscara amostrando vizinhos)
+                if (u_preBlur > 0.0) {
+                    float sum = alpha;
+                    float r = u_preBlur; 
+                    sum += calcKey(uv + vec2(onePixel.x * r, 0.0));
+                    sum += calcKey(uv - vec2(onePixel.x * r, 0.0));
+                    sum += calcKey(uv + vec2(0.0, onePixel.y * r));
+                    sum += calcKey(uv - vec2(0.0, onePixel.y * r));
+                    alpha = sum / 5.0;
+                }
+
+                // 3. Shrink / Grow (Erosão / Dilatação)
+                if (u_shrinkGrow != 0.0) {
+                    float r = abs(u_shrinkGrow);
+                    float a1 = calcKey(uv + vec2(onePixel.x * r, 0.0));
+                    float a2 = calcKey(uv - vec2(onePixel.x * r, 0.0));
+                    float a3 = calcKey(uv + vec2(0.0, onePixel.y * r));
+                    float a4 = calcKey(uv - vec2(0.0, onePixel.y * r));
+                    
+                    if (u_shrinkGrow > 0.0) {
+                        // Grow: Máximo Alpha
+                        alpha = max(alpha, max(max(a1, a2), max(a3, a4)));
+                    } else {
+                        // Shrink: Mínimo Alpha
+                        alpha = min(alpha, min(min(a1, a2), min(a3, a4)));
+                    }
+                }
+
+                // Salva o alpha bruto para o Despill (antes do Clip)
+                float rawAlpha = alpha;
+
+                // 4. Clip (Ajuste de Contraste da Máscara)
+                alpha = smoothstep(u_clipBlack, u_clipWhite, alpha);
+
+                vec4 texColor = texture2D(u_image, uv);
+                vec3 rgb = texColor.rgb;
+
+                // 5. Despill Melhorado
+                // Usa rawAlpha (1.0 - rawAlpha = spill) para detectar contaminação de cor
+                // mesmo em áreas que foram forçadas a serem opacas pelo Clip.
+                vec3 outColor = rgb;
+                if (u_despill > 0.0) {
+                    float spillVal = 1.0 - rawAlpha; // Quanto menor o alpha original, mais cor de fundo tem
+                    if (spillVal > 0.0) {
+                        float gray = dot(rgb, vec3(0.299, 0.587, 0.114));
+                        outColor = mix(rgb, vec3(gray), spillVal * u_despill);
+                    }
+                }
+
+                // Edge Luma (Add brightness to edges)
+                if (u_edgeLuma != 0.0 && alpha < 1.0 && alpha > 0.0) {
+                    outColor += u_edgeLuma * (1.0 - alpha) * 0.5;
+                }
+
+                if (u_viewMode == 1) {
+                    gl_FragColor = vec4(vec3(alpha), 1.0);
+                } else if (u_viewMode == 2) {
+                    gl_FragColor = texColor;
+                } else {
+                    gl_FragColor = vec4(outColor, alpha);
+                }
+            }
+        `;
+
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error(gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        const program = gl.createProgram();
+        gl.attachShader(program, createShader(gl, gl.VERTEX_SHADER, vsSource));
+        gl.attachShader(program, createShader(gl, gl.FRAGMENT_SHADER, fsSource));
+        gl.linkProgram(program);
+        gl.useProgram(program);
+
+        // Buffers
+        const positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+            -1, -1,  1, -1, -1,  1,
+            -1,  1,  1, -1,  1,  1,
+        ]), gl.STATIC_DRAW);
+
+        const texCoordBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+            0, 1,  1, 1,  0, 0,
+            0, 0,  1, 1,  1, 0,
+        ]), gl.STATIC_DRAW);
+
+        // Attributes
+        const positionLocation = gl.getAttribLocation(program, "a_position");
+        const texCoordLocation = gl.getAttribLocation(program, "a_texCoord");
+        gl.enableVertexAttribArray(positionLocation);
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+        gl.enableVertexAttribArray(texCoordLocation);
+        gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+        gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+
+        // Texture
+        const texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+        // Uniform Locations
+        const locs = {
+            texSize: gl.getUniformLocation(program, "u_texSize"),
+            keyColor: gl.getUniformLocation(program, "u_keyColor"),
+            gain: gl.getUniformLocation(program, "u_gain"),
+            balance: gl.getUniformLocation(program, "u_balance"),
+            clipBlack: gl.getUniformLocation(program, "u_clipBlack"),
+            clipWhite: gl.getUniformLocation(program, "u_clipWhite"),
+            despill: gl.getUniformLocation(program, "u_despill"),
+            edgeLuma: gl.getUniformLocation(program, "u_edgeLuma"),
+            shrinkGrow: gl.getUniformLocation(program, "u_shrinkGrow"),
+            preBlur: gl.getUniformLocation(program, "u_preBlur"),
+            crop: gl.getUniformLocation(program, "u_crop"),
+            viewMode: gl.getUniformLocation(program, "u_viewMode"),
+        };
+
+        window.toggleAccordion = function(element) {
+            element.classList.toggle('active');
+            const content = element.nextElementSibling;
+            content.classList.toggle('active');
+        }
+
+        function setupSyncedInput(rangeId, numberId, paramKey, scale = 1, offset = 0) {
+            const range = document.getElementById(rangeId);
+            const number = document.getElementById(numberId);
+            if(!range) return;
+            
+            const update = (val) => {
+                val = parseFloat(val);
+                range.value = val;
+                if(number) number.value = val;
+                params[paramKey] = (val - offset) / scale;
+                // Force a redraw even if paused
+                if (!isPlaying && sourceType !== 'none') {
+                    requestAnimationFrame(processFrame);
+                }
+            };
+            range.addEventListener('input', (e) => update(e.target.value));
+            if(number) number.addEventListener('input', (e) => update(e.target.value));
+            
+            params[paramKey] = (parseFloat(range.value) - offset) / scale;
+        }
+
+        // Inputs Setup
+        setupSyncedInput('rngGain', 'numGain', 'gain', 100);
+        setupSyncedInput('rngBalance', 'numBalance', 'balance', 100);
+        setupSyncedInput('rngClipBlack', 'numClipBlack', 'clipBlack', 100);
+        setupSyncedInput('rngClipWhite', 'numClipWhite', 'clipWhite', 100);
+        setupSyncedInput('rngShrinkGrow', 'numShrinkGrow', 'shrinkGrow', 10); 
+        setupSyncedInput('rngPreBlur', 'numPreBlur', 'preBlur', 1); 
+        setupSyncedInput('rngDespillSat', 'numDespillSat', 'despillSat', 100); 
+        setupSyncedInput('rngEdgeLuma', 'numEdgeLuma', 'edgeLuma', 1);
+        setupSyncedInput('rngCropLeft', null, 'cropLeft', 100);
+        setupSyncedInput('rngCropRight', null, 'cropRight', 100);
+        setupSyncedInput('rngCropTop', null, 'cropTop', 100);
+        setupSyncedInput('rngCropBottom', null, 'cropBottom', 100);
+        setupSyncedInput('rngAlphaGamma', 'numAlphaGamma', 'alphaGamma', 1);
+
+        // Logic
+        let isPicking = false;
+
+        keyColorInput.addEventListener('input', (e) => {
+            const rgb = hexToRgb(e.target.value);
+            updateKeyColor(rgb.r, rgb.g, rgb.b);
+            requestAnimationFrame(processFrame);
+        });
+
+        pickScreenColorBtn.addEventListener('click', () => {
+            isPicking = !isPicking;
+            pickScreenColorBtn.classList.toggle('text-blue-400', isPicking);
+            outputCanvas.style.cursor = isPicking ? 'crosshair' : 'default';
+        });
+
+        outputCanvas.addEventListener('click', (e) => {
+            if (!isPicking) return;
+            
+            // Create temp canvas to read pixel color from source
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = outputCanvas.width;
+            tempCanvas.height = outputCanvas.height;
+            const tCtx = tempCanvas.getContext('2d');
+            
+            if(sourceType === 'video') tCtx.drawImage(sourceVideo, 0, 0, tempCanvas.width, tempCanvas.height);
+            else if (sourceType === 'image') tCtx.drawImage(sourceImage, 0, 0, tempCanvas.width, tempCanvas.height);
+
+            const rect = outputCanvas.getBoundingClientRect();
+            const scaleX = outputCanvas.width / rect.width;
+            const scaleY = outputCanvas.height / rect.height;
+            const x = Math.floor((e.clientX - rect.left) * scaleX);
+            const y = Math.floor((e.clientY - rect.top) * scaleY);
+
+            const p = tCtx.getImageData(x, y, 1, 1).data;
+            updateKeyColor(p[0], p[1], p[2]);
+
+            // --- AUTO ADJUST (UNIVERSAL) ---
+            // Reseta para valores seguros que funcionam bem com o novo algoritmo de distância
+            
+            // Balance (Tolerância): 15% (Remove cores muito próximas)
+            const newBal = 15;
+            document.getElementById('rngBalance').value = newBal;
+            document.getElementById('numBalance').value = newBal;
+            params.balance = newBal / 100.0;
+
+            // Gain (Força/Dureza): 400% (Borda firme para começar)
+            const newGain = 400;
+            document.getElementById('rngGain').value = newGain;
+            document.getElementById('numGain').value = newGain;
+            params.gain = newGain / 100.0;
+
+            isPicking = false;
+            pickScreenColorBtn.classList.remove('text-blue-400');
+            outputCanvas.style.cursor = 'default';
+            requestAnimationFrame(processFrame);
+        });
+
+        function updateKeyColor(r, g, b) {
+            params.r = r; params.g = g; params.b = b;
+            const hex = rgbToHex(r, g, b);
+            keyColorInput.value = hex;
+            colorPreview.style.backgroundColor = hex;
+            colorHex.innerText = hex.toUpperCase();
+        }
+
+        Object.keys(viewBtns).forEach(key => {
+            viewBtns[key].addEventListener('click', () => {
+                currentView = key;
+                Object.values(viewBtns).forEach(btn => {
+                    btn.classList.remove('text-blue-400', 'border-b-2', 'border-blue-400');
+                    btn.classList.add('text-gray-400');
+                });
+                viewBtns[key].classList.remove('text-gray-400');
+                viewBtns[key].classList.add('text-blue-400', 'border-b-2', 'border-blue-400');
+                requestAnimationFrame(processFrame);
+            });
+        });
+
+        function setZoom(percent) {
+            zoomSlider.value = percent;
+            zoomValue.innerText = percent + '%';
+            const scale = percent / 100;
+            canvasWrapper.style.transform = `scale(${scale})`;
+        }
+        zoomSlider.addEventListener('input', (e) => setZoom(e.target.value));
+
+        // --- FILE HANDLING (VIDEO & IMAGE) ---
+        fileUpload.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const url = URL.createObjectURL(file);
+            emptyState.classList.add('hidden');
+            canvasContainer.classList.remove('hidden');
+            
+            // Reset previous state
+            cancelAnimationFrame(animationFrameId);
+            sourceVideo.pause();
+            isPlaying = false;
+            playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
+            sourceVideo.src = '';
+            
+            if (file.type.startsWith('image/')) {
+                // Handle Image
+                sourceType = 'image';
+                sourceImage.onload = () => {
+                    outputCanvas.width = sourceImage.width;
+                    outputCanvas.height = sourceImage.height;
+                    gl.viewport(0, 0, outputCanvas.width, outputCanvas.height);
+                    
+                    const isVertical = sourceImage.height > sourceImage.width;
+                    setZoom(isVertical ? 50 : 100);
+                    
+                    // UI Updates
+                    btnExportVideo.disabled = true;
+                    btnExportVideo.classList.add('opacity-50', 'cursor-not-allowed');
+                    btnExportImage.disabled = false;
+                    playPauseBtn.disabled = true;
+                    restartBtn.disabled = true;
+                    timeDisplay.innerText = "FOTO";
+                    
+                    // Start loop (needed for realtime slider adjustments even for static image)
+                    startRenderLoop(); 
+                };
+                sourceImage.src = url;
+                
+            } else if (file.type.startsWith('video/')) {
+                // Handle Video
+                sourceType = 'video';
+                sourceVideo.src = url;
+                sourceVideo.load();
+                
+                sourceVideo.onloadedmetadata = () => {
+                    outputCanvas.width = sourceVideo.videoWidth;
+                    outputCanvas.height = sourceVideo.videoHeight;
+                    gl.viewport(0, 0, outputCanvas.width, outputCanvas.height);
+                    
+                    const isVertical = sourceVideo.videoHeight > sourceVideo.videoWidth;
+                    setZoom(isVertical ? 50 : 100);
+                    
+                    // UI Updates
+                    btnExportVideo.disabled = false;
+                    btnExportVideo.classList.remove('opacity-50', 'cursor-not-allowed');
+                    btnExportImage.disabled = false;
+                    playPauseBtn.disabled = false;
+                    restartBtn.disabled = false;
+                    
+                    // Não dar play automático, apenas mostrar o primeiro frame
+                    sourceVideo.currentTime = 0;
+                };
+
+                // Garante que o primeiro frame seja desenhado assim que os dados estiverem prontos
+                sourceVideo.onloadeddata = () => {
+                    // Correção: Força o vídeo para o início se estiver em outro tempo (ex: 5s)
+                    if(sourceVideo.currentTime > 0.1) sourceVideo.currentTime = 0;
+                    requestAnimationFrame(processFrame);
+                };
+            }
+        });
+
+        // Video Controls
+        playPauseBtn.addEventListener('click', () => {
+            if(sourceType !== 'video') return;
+            if(sourceVideo.paused) playVideo(); else pauseVideo();
+        });
+
+        restartBtn.addEventListener('click', () => {
+            if(sourceType !== 'video') return;
+            sourceVideo.currentTime = 0;
+            playVideo();
+        });
+
+        function playVideo() {
+            if(sourceType !== 'video') return;
+            sourceVideo.play();
+            isPlaying = true;
+            playPauseBtn.innerHTML = '<i class="fas fa-pause"></i>';
+            startRenderLoop();
+        }
+
+        function pauseVideo() {
+            if(sourceType !== 'video') return;
+            sourceVideo.pause();
+            isPlaying = false;
+            playPauseBtn.innerHTML = '<i class="fas fa-play"></i>';
+            cancelAnimationFrame(animationFrameId);
+        }
+
+        sourceVideo.addEventListener('timeupdate', () => {
+            const cur = sourceVideo.currentTime;
+            const dur = sourceVideo.duration || 0;
+            timeDisplay.innerText = new Date(cur * 1000).toISOString().substr(11, 8);
+            
+            // Atualiza a posição da bolinha (se não estiver arrastando manualmente)
+            if (dur > 0 && !isScrubbing) {
+                timelinePlayhead.style.left = (cur / dur * 100) + '%';
+            }
+
+            if (isExporting && dur > 0) {
+                const pct = Math.round((cur / dur) * 100);
+                progressBar.style.width = `${pct}%`;
+                progressText.innerText = `${pct}%`;
+            }
+        });
+
+        sourceVideo.addEventListener('ended', () => {
+            if (isExporting) finishExport();
+        });
+
+        // Atualiza o canvas quando o vídeo busca um novo frame (Seek)
+        sourceVideo.addEventListener('seeked', () => {
+            if (sourceType === 'video' && !isPlaying) {
+                requestAnimationFrame(processFrame);
+            }
+        });
+
+        // --- TIMELINE SCRUBBING (Mover Linha do Tempo) ---
+        let isScrubbing = false;
+
+        function handleScrub(e) {
+            if (sourceType !== 'video') return;
+            const rect = timelineTrack.getBoundingClientRect();
+            // Calcula posição do mouse relativa à barra (0 a 1)
+            const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+            const pct = x / rect.width;
+            
+            if (sourceVideo.duration) {
+                sourceVideo.currentTime = pct * sourceVideo.duration;
+                timelinePlayhead.style.left = (pct * 100) + '%';
+                // Removemos a chamada direta aqui para evitar tela preta. O evento 'seeked' cuidará disso.
+            }
+        }
+
+        timelineTrack.addEventListener('mousedown', (e) => { isScrubbing = true; handleScrub(e); });
+        document.addEventListener('mousemove', (e) => { if (isScrubbing) handleScrub(e); });
+        document.addEventListener('mouseup', () => { isScrubbing = false; });
+
+        // --- RENDER LOOP ---
+        function startRenderLoop() {
+            cancelAnimationFrame(animationFrameId);
+            
+            const loop = () => {
+                processFrame();
+                
+                // Keep looping if: 
+                // 1. It's a playing video OR 
+                // 2. It's an image (so we can see slider changes instantly)
+                if ((sourceType === 'video' && !sourceVideo.paused && !sourceVideo.ended) || sourceType === 'image') {
+                    animationFrameId = requestAnimationFrame(loop);
+                }
+            };
+            loop();
+        }
+
+        // --- CORE PROCESSING ---
+        function processFrame() {
+            if (sourceType === 'none') return;
+
+            // Limpa o canvas com verde sólido (Chroma Key) antes de desenhar
+            gl.clearColor(0.0, 1.0, 0.0, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+
+            // Upload Texture
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            
+            if (sourceType === 'video') {
+                // Evita tela preta: só atualiza se o vídeo tiver dados suficientes (HAVE_CURRENT_DATA = 2)
+                if (sourceVideo.readyState >= 2) {
+                    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceVideo);
+                }
+            } else {
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceImage);
+            }
+
+            // Update Uniforms
+            gl.uniform2f(locs.texSize, outputCanvas.width, outputCanvas.height);
+            gl.uniform3f(locs.keyColor, params.r/255, params.g/255, params.b/255);
+            gl.uniform1f(locs.gain, params.gain);
+            gl.uniform1f(locs.balance, params.balance);
+            gl.uniform1f(locs.clipBlack, params.clipBlack);
+            gl.uniform1f(locs.clipWhite, params.clipWhite);
+            gl.uniform1f(locs.despill, params.despillSat);
+            gl.uniform1f(locs.edgeLuma, params.edgeLuma);
+            gl.uniform1f(locs.shrinkGrow, params.shrinkGrow);
+            gl.uniform1f(locs.preBlur, params.preBlur);
+            gl.uniform4f(locs.crop, params.cropLeft, params.cropRight, params.cropTop, params.cropBottom);
+            
+            let mode = 0;
+            if (currentView === 'matte') mode = 1;
+            if (currentView === 'source') mode = 2;
+            gl.uniform1i(locs.viewMode, mode);
+
+            // Draw
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+        }
+
+        // Helpers
+        function hexToRgb(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : { r: 0, g: 255, b: 0 };
+        }
+        function rgbToHex(r, g, b) {
+            return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+        }
+
+        // --- EXPORT VIDEO ---
+        let mediaRecorder;
+        let recordedChunks = [];
+        let isExporting = false;
+
+        btnExportVideo.addEventListener('click', () => {
+            if (isExporting || sourceType !== 'video') return;
+            isExporting = true;
+            recordedChunks = [];
+            exportOverlay.classList.remove('hidden');
+            exportOverlay.classList.add('flex');
+            sourceVideo.loop = false;
+            sourceVideo.currentTime = 0;
+            sourceVideo.muted = false; // Desmuta para garantir que o áudio seja capturado no stream
+            currentView = 'final'; 
+
+            // Captura a 60 FPS para maior fluidez de movimento
+            const stream = outputCanvas.captureStream(60);
+            try {
+                const vStream = sourceVideo.captureStream ? sourceVideo.captureStream() : sourceVideo.mozCaptureStream();
+                if(vStream && vStream.getAudioTracks().length > 0) stream.addTrack(vStream.getAudioTracks()[0]);
+            } catch(e) {}
+
+            // Seleção de Codec de Alta Qualidade (VP9 + Opus preferencialmente)
+            const mimeTypes = ['video/webm; codecs=vp9,opus', 'video/webm; codecs=vp8,opus', 'video/webm'];
+            let selectedMime = 'video/webm';
+            for (const t of mimeTypes) {
+                if (MediaRecorder.isTypeSupported(t)) { selectedMime = t; break; }
+            }
+
+            const options = { 
+                mimeType: selectedMime, 
+                videoBitsPerSecond: 25000000, // 25 Mbps (Alta Fidelidade)
+                audioBitsPerSecond: 192000    // 192 kbps Áudio
+            };
+
+            mediaRecorder = new MediaRecorder(stream, options);
+            mediaRecorder.ondataavailable = e => { if(e.data.size > 0) recordedChunks.push(e.data); };
+            mediaRecorder.onstop = saveVideoFile;
+            
+            mediaRecorder.start();
+            playVideo();
+        });
+
+        function finishExport() {
+            mediaRecorder.stop();
+            resetExportUI();
+        }
+
+        function saveVideoFile() {
+            const blob = new Blob(recordedChunks, { type: 'video/webm' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'chroma_video.webm';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // --- EXPORT IMAGE (PNG) ---
+        btnExportImage.addEventListener('click', () => {
+            // Força renderização no modo final antes de salvar
+            const prevView = currentView;
+            currentView = 'final';
+            processFrame();
+
+            // Cria o link de download
+            const dataURL = outputCanvas.toDataURL('image/png');
+            const a = document.createElement('a');
+            a.href = dataURL;
+            a.download = 'chroma_foto.png';
+            a.click();
+
+            // Restaura view anterior
+            currentView = prevView;
+            processFrame();
+        });
+
+        cancelExportBtn.addEventListener('click', () => {
+            isExporting = false;
+            if(mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+            mediaRecorder.onstop = null; 
+            resetExportUI();
+        });
+
+        function resetExportUI() {
+            isExporting = false;
+            exportOverlay.classList.add('hidden');
+            exportOverlay.classList.remove('flex');
+            if(sourceType === 'video') {
+                sourceVideo.loop = true;
+                sourceVideo.muted = false;
+                sourceVideo.currentTime = 0;
+                pauseVideo();
+            }
+        }
+    </script>
+</body>
+</html>

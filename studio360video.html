@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Alexandre Studio 360 | VIDEO EDITION</title>
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <style>
+        :root { --accent: #00f2ff; --bg: #05070a; --panel: rgba(10, 14, 20, 0.98); --danger: #ff3e3e; }
+        body { margin: 0; background: var(--bg); font-family: 'Inter', sans-serif; overflow: hidden; color: #fff; }
+        .a-enter-vr, .a-enter-ar { display: none !important; }
+
+        #viewport {
+            position: absolute; top: 0; left: 0; width: 100%; height: calc(100vh - 240px);
+            display: flex; justify-content: center; align-items: center; background: #000;
+        }
+
+        #scene-wrapper { position: relative; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; }
+        body.preview-tiktok #scene-wrapper { width: auto; height: 100%; aspect-ratio: 9 / 16; border: 2px solid var(--accent); }
+
+        #ui-layer { 
+            position: absolute; bottom: 0; left: 0; width: 100%; height: 240px; 
+            background: var(--panel); border-top: 1px solid var(--accent); 
+            z-index: 1000; display: flex; flex-direction: column; 
+        }
+
+        #timeline-container { padding: 10px 25px; background: rgba(0,0,0,0.3); }
+        #video-seeker { width: 100%; cursor: pointer; accent-color: var(--accent); margin: 0; }
+
+        .header { padding: 8px 25px; display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.5); font-size: 10px; letter-spacing: 2px; }
+        .track { flex-grow: 1; display: flex; align-items: center; gap: 12px; padding: 0 25px; overflow-x: auto; }
+        
+        .kf-node { 
+            min-width: 110px; height: 60px; background: rgba(255,255,255,0.05); border: 1px solid rgba(0, 242, 255, 0.3);
+            border-radius: 6px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 8px; cursor: pointer; position: relative; 
+        }
+        .kf-node b { color: var(--accent); margin-bottom: 4px; }
+        .node-del { position: absolute; top: -8px; right: -8px; width: 20px; height: 20px; background: var(--danger); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; border: 2px solid var(--bg); cursor: pointer; z-index: 10; }
+
+        .controls { padding: 12px 25px; display: flex; gap: 10px; align-items: center; background: rgba(0,0,0,0.7); }
+        .btn { background: none; border: 1px solid rgba(255,255,255,0.3); color: #fff; padding: 10px 14px; border-radius: 4px; cursor: pointer; font-size: 9px; font-weight: bold; text-transform: uppercase; }
+        .btn.active { background: var(--accent); color: #000; border-color: var(--accent); }
+        
+        #render-curtain { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 9999; display: none; flex-direction: column; align-items: center; justify-content: center; }
+        .loader { width: 300px; height: 4px; background: #222; margin-top: 20px; border-radius: 2px; overflow: hidden; }
+        .loader-bar { width: 0%; height: 100%; background: var(--accent); }
+    </style>
+</head>
+<body class="preview-yt">
+
+    <div id="render-curtain">
+        <h2 style="letter-spacing: 10px; font-weight: 100;">EXPORTANDO VÍDEO</h2>
+        <div id="render-status" style="font-size: 10px; color: var(--accent);">NÃO MINIMIZE ESTA ABA...</div>
+        <div class="loader"><div class="loader-bar" id="bar"></div></div>
+    </div>
+
+    <div id="viewport">
+        <div id="scene-wrapper">
+            <a-scene embedded vr-mode-ui="enabled: false" renderer="antialias: true; preserveDrawingBuffer: true;">
+                <a-assets>
+                    <video id="video-asset" crossorigin="anonymous" playsinline></video>
+                </a-assets>
+                <a-videosphere id="world" src="#video-asset" radius="50000" rotation="0 -90 0"></a-videosphere>
+                
+                <a-entity id="rig" position="0 1.6 0">
+                    <a-entity id="cam" camera="fov: 80; far: 100000" look-controls="pointerLockEnabled: true"></a-entity>
+                </a-entity>
+            </a-scene>
+        </div>
+    </div>
+
+    <div id="ui-layer">
+        <div id="timeline-container">
+            <input type="range" id="video-seeker" min="0" value="0" step="0.001">
+            <div style="display: flex; justify-content: space-between; font-size: 9px; color: var(--accent); margin-top: 5px;">
+                <span id="time-curr">00:00.0</span>
+                <span id="time-total">00:00.0</span>
+            </div>
+        </div>
+
+        <div class="header">
+            <span>ALEXANDRE STUDIO 360 | VIDEO</span>
+            <span>MODO: <span id="fmt-label" style="color:var(--accent)">16:9</span></span>
+        </div>
+
+        <div class="track" id="track-list"></div>
+
+        <div class="controls">
+            <label for="v-up" class="btn">📁 Abrir Vídeo</label>
+            <input type="file" id="v-up" accept="video/*" style="display:none">
+            
+            <button class="btn" id="add-kf" style="background: var(--accent); color: #000; border: none;">+ Keyframe</button>
+            
+            <div style="display: flex; gap: 5px; background: rgba(255,255,255,0.05); padding: 5px; border-radius: 6px;">
+                <button class="btn active" id="btn-yt" onclick="setFormat('yt')">📺 YT</button>
+                <button class="btn" id="btn-tiktok" onclick="setFormat('tiktok')">📱 TikTok</button>
+            </div>
+
+            <div style="flex-grow: 1;"></div>
+            <button class="btn" id="play-btn" style="color: var(--accent); border-color: var(--accent);">▶ Preview</button>
+            <button class="btn" id="render-btn" style="background:var(--danger); border:none; color:#fff;">🔴 Renderizar</button>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('video-asset');
+        const seeker = document.getElementById('video-seeker');
+        const rig = document.getElementById('rig'), cam = document.getElementById('cam'), scene = document.querySelector('a-scene');
+        const wrapper = document.getElementById('scene-wrapper');
+        
+        let keyframes = [], keys = {}, selectedFormat = 'yt', currentFOV = 80;
+
+        // --- MOVIMENTAÇÃO (FIXED) ---
+        window.onkeydown = (e) => keys[e.code] = true;
+        window.onkeyup = (e) => keys[e.code] = false;
+
+        function moveLoop() {
+            if(scene.is('rendering')) return;
+            let pos = rig.getAttribute('position');
+            let speed = 100.0;
+            let rad = cam.object3D.rotation.y;
+            
+            if (keys['KeyW']) { pos.x -= Math.sin(rad) * speed; pos.z -= Math.cos(rad) * speed; }
+            if (keys['KeyS']) { pos.x += Math.sin(rad) * speed; pos.z += Math.cos(rad) * speed; }
+            if (keys['KeyA']) { pos.x -= Math.cos(rad) * speed; pos.z += Math.sin(rad) * speed; }
+            if (keys['KeyD']) { pos.x += Math.cos(rad) * speed; pos.z -= Math.sin(rad) * speed; }
+            if (keys['KeyE']) pos.y += speed; 
+            if (keys['KeyQ']) pos.y -= speed;
+            if (pos.y < 0.1) pos.y = 0.1;
+
+            rig.setAttribute('position', pos);
+            requestAnimationFrame(moveLoop);
+        }
+        moveLoop();
+
+        window.onwheel = (e) => {
+            currentFOV = Math.min(Math.max(currentFOV + (e.deltaY * 0.05), 10), 120);
+            cam.setAttribute('camera', 'fov', currentFOV);
+        };
+
+        // --- CARREGAR VÍDEO ---
+        document.getElementById('v-up').onchange = (e) => {
+            const file = e.target.files[0];
+            video.src = URL.createObjectURL(file);
+            video.load();
+            video.onloadedmetadata = () => {
+                seeker.max = video.duration;
+                document.getElementById('time-total').innerText = formatTime(video.duration);
+            };
+        };
+
+        function formatTime(s) {
+            const m = Math.floor(s / 60);
+            const sec = (s % 60).toFixed(1);
+            return `${m.toString().padStart(2,'0')}:${sec.toString().padStart(4,'0')}`;
+        }
+
+        seeker.oninput = () => { video.currentTime = seeker.value; video.pause(); };
+        video.ontimeupdate = () => { if(!video.paused) seeker.value = video.currentTime; document.getElementById('time-curr').innerText = formatTime(video.currentTime); };
+
+        // --- KEYFRAMES ---
+        document.getElementById('add-kf').onclick = () => {
+            const look = cam.components['look-controls'];
+            keyframes.push({
+                time: video.currentTime,
+                pos: {...rig.getAttribute('position')},
+                rot: { x: THREE.MathUtils.radToDeg(look.pitchObject.rotation.x), y: THREE.MathUtils.radToDeg(look.yawObject.rotation.y) },
+                fov: currentFOV
+            });
+            keyframes.sort((a, b) => a.time - b.time);
+            renderUI();
+        };
+
+        function renderUI() {
+            const list = document.getElementById('track-list');
+            list.innerHTML = keyframes.length ? '' : '<span style="opacity:0.3; font-size:10px;">Adicione pontos no vídeo...</span>';
+            keyframes.forEach((kf, i) => {
+                const node = document.createElement('div');
+                node.className = 'kf-node';
+                node.innerHTML = `<div class="node-del" onclick="event.stopPropagation(); keyframes.splice(${i},1); renderUI();">×</div><b>PONTO ${i+1}</b><span>${formatTime(kf.time)}</span>`;
+                node.onclick = () => { 
+                    video.currentTime = kf.time; 
+                    seeker.value = kf.time; 
+                    rig.setAttribute('position', kf.pos); 
+                    cam.setAttribute('camera', 'fov', kf.fov);
+                    currentFOV = kf.fov;
+                    const look = cam.components['look-controls'];
+                    if(look) { look.pitchObject.rotation.x = THREE.MathUtils.degToRad(kf.rot.x); look.yawObject.rotation.y = THREE.MathUtils.degToRad(kf.rot.y); }
+                };
+                list.appendChild(node);
+            });
+        }
+
+        // --- LÓGICA DE EXECUÇÃO ---
+        async function runPath() {
+            if (keyframes.length < 2) return;
+            
+            cam.setAttribute('look-controls', 'enabled', false);
+            const tl = gsap.timeline();
+            video.currentTime = keyframes[0].time;
+            
+            // Espera o vídeo estar pronto no tempo inicial
+            await new Promise(r => video.onseeked = r);
+            video.play();
+
+            keyframes.forEach((kf, i) => {
+                if (i === 0) {
+                    tl.set(rig.object3D.position, kf.pos);
+                    tl.set(cam.object3D.rotation, { x: THREE.MathUtils.degToRad(kf.rot.x), y: THREE.MathUtils.degToRad(kf.rot.y) });
+                    tl.set({}, { onComplete: () => cam.setAttribute('camera', 'fov', kf.fov) });
+                } else {
+                    const duration = kf.time - keyframes[i-1].time;
+                    tl.to(rig.object3D.position, { x: kf.pos.x, y: kf.pos.y, z: kf.pos.z, duration: duration, ease: "none" });
+                    tl.to(cam.object3D.rotation, { x: THREE.MathUtils.degToRad(kf.rot.x), y: THREE.MathUtils.degToRad(kf.rot.y), duration: duration, ease: "none" }, "<");
+                    let fovObj = { f: keyframes[i-1].fov };
+                    tl.to(fovObj, { f: kf.fov, duration: duration, ease: "none", onUpdate: () => cam.setAttribute('camera', 'fov', fovObj.f) }, "<");
+                }
+            });
+
+            return new Promise(res => {
+                tl.eventCallback("onComplete", () => {
+                    video.pause();
+                    cam.setAttribute('look-controls', 'enabled', true);
+                    res();
+                });
+            });
+        }
+
+        document.getElementById('play-btn').onclick = () => runPath();
+
+        // --- RENDERIZAÇÃO CORRIGIDA ---
+        document.getElementById('render-btn').onclick = async () => {
+            if (keyframes.length < 2) return alert("Adicione no mínimo 2 pontos.");
+            
+            scene.addState('rendering');
+            document.getElementById('render-curtain').style.display = 'flex';
+            const bar = document.getElementById('bar');
+
+            // Ajuste de Resolução
+            const exportW = (selectedFormat === 'tiktok') ? 1080 : 1920;
+            const exportH = (selectedFormat === 'tiktok') ? 1920 : 1080;
+            
+            scene.renderer.setPixelRatio(1);
+            scene.renderer.setSize(exportW, exportH, false);
+            scene.canvas.width = exportW;
+            scene.canvas.height = exportH;
+
+            const c = cam.getObject3D('camera');
+            if (c) {
+                c.aspect = exportW / exportH;
+                c.updateProjectionMatrix();
+            }
+
+            // Sincronização inicial do vídeo
+            video.currentTime = keyframes[0].time;
+            await new Promise(r => video.onseeked = r);
+
+            const chunks = [];
+            const stream = scene.canvas.captureStream(60); 
+            
+            let mime = 'video/webm;codecs=vp9';
+            if (!MediaRecorder.isTypeSupported(mime)) mime = 'video/webm';
+
+            const recorder = new MediaRecorder(stream, { 
+                mimeType: mime, 
+                videoBitsPerSecond: 60000000 
+            });
+
+            recorder.ondataavailable = e => chunks.push(e.data);
+            recorder.onstop = () => {
+                const blob = new Blob(chunks, { type: 'video/webm' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = `AlexandreStudio360.webm`;
+                a.click();
+                setTimeout(() => location.reload(), 1000);
+            };
+
+            // INÍCIO REAL
+            recorder.start();
+            
+            let progressInt = setInterval(() => {
+                let start = keyframes[0].time;
+                let end = keyframes[keyframes.length-1].time;
+                let p = (video.currentTime - start) / (end - start);
+                bar.style.width = Math.min(p * 100, 100) + "%";
+            }, 50);
+
+            await runPath();
+            
+            clearInterval(progressInt);
+            recorder.stop();
+        };
+
+        function setFormat(fmt) {
+            selectedFormat = fmt;
+            document.body.className = (fmt === 'tiktok') ? 'preview-tiktok' : 'preview-yt';
+            document.getElementById('fmt-label').innerText = (fmt === 'yt') ? '16:9' : '9:16';
+            currentFOV = (fmt === 'tiktok') ? 75 : 80;
+            cam.setAttribute('camera', 'fov', currentFOV);
+            const c = cam.getObject3D('camera');
+            if(c) {
+                c.aspect = (fmt === 'yt') ? 16/9 : 9/16;
+                c.updateProjectionMatrix();
+            }
+        }
+    </script>
+</body>
+</html>

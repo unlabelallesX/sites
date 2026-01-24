@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Gravador Pro + Cronômetro</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #121212; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .container { background: #1e1e1e; padding: 40px; border-radius: 20px; box-shadow: 0 15px 35px rgba(0,0,0,0.7); text-align: center; border: 1px solid #333; }
+        
+        /* Estilo do Cronômetro */
+        #timer { font-family: 'Courier New', Courier, monospace; font-size: 3rem; font-weight: bold; color: #00e676; margin-bottom: 20px; text-shadow: 0 0 10px rgba(0, 230, 118, 0.5); }
+        
+        video { width: 100%; max-width: 500px; border-radius: 12px; background: #000; margin-bottom: 25px; border: 2px solid #444; }
+        
+        .controls { display: flex; gap: 15px; justify-content: center; }
+        button { padding: 15px 30px; font-size: 16px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; transition: all 0.2s; }
+        
+        #startBtn { background: #00c853; color: white; }
+        #startBtn:hover { background: #00e676; transform: scale(1.05); }
+        
+        #stopBtn { background: #ff1744; color: white; }
+        #stopBtn:hover { background: #ff5252; transform: scale(1.05); }
+        #stopBtn:disabled { background: #444; color: #888; cursor: not-allowed; transform: none; }
+        
+        .hint { margin-top: 20px; color: #777; font-size: 0.85rem; }
+
+        .settings { margin-bottom: 20px; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 14px; color: #ccc; }
+        .settings input { padding: 8px; border-radius: 5px; border: 1px solid #444; background: #222; color: white; width: 60px; text-align: center; font-weight: bold; }
+
+        #countdownOverlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85); z-index: 9999;
+            display: none; align-items: center; justify-content: center;
+            font-size: 15rem; font-weight: bold; color: #00e676; font-family: 'Segoe UI', sans-serif; text-shadow: 0 0 30px rgba(0, 230, 118, 0.5);
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div id="timer">00:00:00</div>
+    <video id="preview" autoplay muted></video>
+
+    <div class="settings">
+        <label for="countdown">⏳ Contagem (segundos):</label>
+        <input type="number" id="countdown" value="3" min="0" max="60">
+    </div>
+    
+    <div class="controls">
+        <button id="startBtn">🔴 Iniciar Gravação</button>
+        <button id="stopBtn" disabled>⬛ Parar e Salvar</button>
+    </div>
+    
+    <p class="hint">Lembre-se de marcar "Compartilhar áudio do sistema" ao iniciar.</p>
+</div>
+
+
+
+<script>
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const preview = document.getElementById('preview');
+    const timerDisplay = document.getElementById('timer');
+
+    let mediaRecorder;
+    let recordedChunks = [];
+    let startTime;
+    let timerInterval;
+
+    // Função para formatar o tempo (00:00:00)
+    function updateTimer() {
+        const now = Date.now();
+        const diff = now - startTime;
+        const h = Math.floor(diff / 3600000).toString().padStart(2, '0');
+        const m = Math.floor((diff % 3600000) / 60000).toString().padStart(2, '0');
+        const s = Math.floor((diff % 60000) / 1000).toString().padStart(2, '0');
+        timerDisplay.innerText = `${h}:${m}:${s}`;
+    }
+
+    startBtn.onclick = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getDisplayMedia({
+                video: {
+                    frameRate: { ideal: 60 },
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 }
+                },
+                audio: {
+                    echoCancellation: false,
+                    sampleRate: 48000
+                }
+            });
+
+            preview.srcObject = stream;
+
+            // --- Contagem Regressiva ---
+            const seconds = parseInt(countdownInput.value) || 0;
+            if (seconds > 0) {
+                startBtn.disabled = true;
+                countdownOverlay.style.display = 'flex';
+                
+                for (let i = seconds; i > 0; i--) {
+                    if (!stream.active) break; // Se o usuário cancelar o compartilhamento durante a contagem
+                    countdownOverlay.innerText = i;
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+                countdownOverlay.style.display = 'none';
+            }
+
+            if (!stream.active) {
+                startBtn.disabled = false;
+                return;
+            }
+
+            const options = {
+                mimeType: 'video/webm;codecs=vp9,opus',
+                videoBitsPerSecond: 8000000 // Alta fidelidade
+            };
+
+            mediaRecorder = new MediaRecorder(stream, options);
+
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) recordedChunks.push(e.data);
+            };
+
+            mediaRecorder.onstop = () => {
+                clearInterval(timerInterval);
+                saveVideo(recordedChunks);
+                recordedChunks = [];
+            };
+
+            // Inicia gravação e cronômetro
+            mediaRecorder.start();
+            startTime = Date.now();
+            timerInterval = setInterval(updateTimer, 1000);
+
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+
+        } catch (err) {
+            console.error("Erro:", err);
+            alert("Captura cancelada ou erro de permissão.");
+        }
+    };
+
+    stopBtn.onclick = () => {
+        mediaRecorder.stop();
+        preview.srcObject.getTracks().forEach(track => track.stop());
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        // Opcional: resetar timer após parar
+        // timerDisplay.innerText = "00:00:00";
+    };
+
+    function saveVideo(chunks) {
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const data = new Date().toISOString().slice(0,10);
+        a.href = url;
+        a.download = `gravacao_pro_${data}.webm`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+    }
+</script>
+
+</body>
+</html>
