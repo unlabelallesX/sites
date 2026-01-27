@@ -899,6 +899,7 @@
             // Tool State
             let currentTool = 'brush'; // 'brush', 'eraser', 'selection', 'puppet', 'bucket', 'eyedropper', 'pan'
             let isSelecting = false;
+            let isDrawingPuppetLasso = false;
             let selectionPath = [];
             let fillTolerance = parseInt(fillToleranceSlider.value);
             
@@ -1739,13 +1740,18 @@
                     ctx.strokeStyle = 'rgba(255, 0, 255, 1.0)'; // Linhas
                     ctx.fillStyle = 'rgba(255, 0, 255, 1.0)';   // Quadrados dos pinos
                     ctx.lineWidth = 2;
-                    ctx.setLineDash([5, 5]);
+                    
+                    if (isDrawingPuppetLasso) {
+                        ctx.setLineDash([]); // Linha sólida para o laço
+                    } else {
+                        ctx.setLineDash([5, 5]);
+                    }
 
                     ctx.beginPath();
                     ctx.moveTo(puppetPins[0].x, puppetPins[0].y);
                     puppetPins.forEach((pin, i) => {
                         if (i > 0) ctx.lineTo(pin.x, pin.y);
-                        ctx.fillRect(pin.x - 4, pin.y - 4, 8, 8); // Desenha um quadrado para cada pino
+                        if (!isDrawingPuppetLasso) ctx.fillRect(pin.x - 4, pin.y - 4, 8, 8); // Desenha um quadrado para cada pino
                     });
                     ctx.stroke(); // Desenha as linhas conectando os pinos
                     ctx.restore();
@@ -2281,6 +2287,7 @@
                 
                 // 2. Reseta estados de interação para evitar loops
                 isSelecting = false;
+                isDrawingPuppetLasso = false;
                 isDrawing = false; 
                 activePointerId = null;
 
@@ -2454,7 +2461,7 @@
 
             // --- LÓGICA FINAL DA FERRAMENTA DE MARIONETE ---
             const handlePuppetStart = (pos) => {
-                // 1. Verifica se clicou em um pino de um puppet JÁ EXISTENTE (na lista puppets)
+                // 1. Verifica se clicou em um PINO existente (Prioridade 1)
                 for (let i = 0; i < puppets.length; i++) {
                     const p = puppets[i];
                     for (let j = 0; j < p.pins.length; j++) {
@@ -2467,10 +2474,8 @@
                     }
                 }
 
-                // 2. Se não clicou em puppet existente, verifica se estamos criando um novo
-                // ou se estamos editando um "single" puppet (legado/transição)
+                // 2. Verifica se clicou em um PINO da seleção ativa (Prioridade 1.5)
                 if (selectionCanvas && warpGrid) {
-                     // Lógica antiga para puppet único (se ainda existir nesse estado)
                      for (let i = 0; i < puppetPins.length; i++) {
                         if (Math.hypot(pos.x - puppetPins[i].x, pos.y - puppetPins[i].y) < 15) {
                             activeWarpNode = { type: 'puppet', puppetIndex: -1, pinIndex: i }; // -1 indica puppet em criação/único
@@ -2481,36 +2486,64 @@
                     }
                 }
 
-                // 3. Modo de CRIAÇÃO (Adicionar pontos)
-                {
-                    // Verifica se o usuário clicou perto do primeiro pino para fechar a forma
-                    if (puppetPins.length > 2 && Math.hypot(pos.x - puppetPins[0].x, pos.y - puppetPins[0].y) < 20) {
-                        // FECHAR A FORMA
-                        selectionPath = [...puppetPins, puppetPins[0]]; // Adiciona o primeiro pino no final para fechar
-                        finalizeAndCaptureSelection(); // Captura a imagem
-                        
-                        // Cria a grade de deformação baseada na seleção
-                        createWarpGridFromSelection();
+                // 3. Verifica se clicou na MALHA (Mesh) para deformação livre (Prioridade 2)
+                let closestGridPoint = null;
+                let minDist = 100; // Raio de detecção
+                let hitPuppetIndex = -2; // -2: nenhum, -1: ativo, >=0: lista
+                let hitCoords = null;
 
-                        // --- MOVE PARA A LISTA DE PUPPETS ---
-                        puppets.push({
+                // Helper para checar grid
+                const checkGrid = (grid, pIdx) => {
+                    if (!grid) return;
+                    for (let r = 0; r < grid.length; r++) {
+                        for (let c = 0; c < grid[r].length; c++) {
+                            const pt = grid[r][c];
+                            const d = Math.hypot(pos.x - pt.x, pos.y - pt.y);
+                            if (d < minDist) {
+                                minDist = d;
+                                closestGridPoint = pt;
+                                hitPuppetIndex = pIdx;
+                                hitCoords = { r, c };
+                            }
+                        }
+                    }
+                };
+
+                // Checa puppets da lista
+                for (let i = 0; i < puppets.length; i++) checkGrid(puppets[i].grid, i);
+                // Checa puppet ativo
+                if (warpGrid) checkGrid(warpGrid, -1);
+
+                if (closestGridPoint && hitPuppetIndex !== -2) {
+                    activeWarpNode = { 
+                        type: 'puppet-grid', 
+                        puppetIndex: hitPuppetIndex, 
+                        r: hitCoords.r, 
+                        c: hitCoords.c 
+                    };
+                    window.addEventListener('pointermove', handlePuppetMove);
+                    window.addEventListener('pointerup', handlePuppetUp);
+                    return;
+                }
+
+                // 4. Se não clicou em nada, inicia CRIAÇÃO FREEHAND (Lasso)
+                // Se houver um puppet ativo flutuando, comita ele antes de criar outro
+                if (selectionCanvas && warpGrid) {
+                    puppets.push({
                             canvas: selectionCanvas,
                             transform: { ...selectionTransform },
                             grid: warpGrid,
                             pins: puppetPins.map(p => ({...p}))
-                        });
-
-                        // Limpa o estado de criação para permitir criar outro
-                        selectionCanvas = null;
-                        warpGrid = null;
-                        puppetPins = [];
-                        selectionPath = [];
-
-                    } else {
-                        // Adiciona um novo pino
-                        puppetPins.push({ x: pos.x, y: pos.y, ox: pos.x, oy: pos.y });
-                    }
+                    });
+                    selectionCanvas = null;
+                    warpGrid = null;
+                    puppetPins = [];
                 }
+
+                isDrawingPuppetLasso = true;
+                puppetPins = [pos]; // Inicia o caminho
+                window.addEventListener('pointermove', handleDrawMove);
+                window.addEventListener('pointerup', handleDrawEnd);
                 renderCanvas();
             };
 
@@ -2704,7 +2737,7 @@
             const handleDrawMove = (e) => {
                 // CORREÇÃO: A condição foi simplificada. A verificação de 'activeHandle' já cobre o caso da seleção.
                 // A verificação de 'activeWarpNode' cobre os casos de 'warp' e 'puppet'.
-                if (!isDrawing && !isSelecting && !activeHandle && !activeWarpNode && !(activeWarpNode && activeWarpNode.type === 'puppet')) return;
+                if (!isDrawing && !isSelecting && !isDrawingPuppetLasso && !activeHandle && !activeWarpNode && !(activeWarpNode && activeWarpNode.type === 'puppet')) return;
                 if (e.pointerId !== undefined && activePointerId !== null && activePointerId !== e.pointerId && e.pressure === undefined) {
                     return;
                 }
@@ -2712,6 +2745,17 @@
                 // Esta função agora funciona perfeitamente, mesmo fora do canvas
                 const pos = getMousePos(mainCanvas, e);
             
+                // Desenho do Lasso do Puppet
+                if (isDrawingPuppetLasso) {
+                    const last = puppetPins[puppetPins.length - 1];
+                    // Adiciona ponto se moveu o suficiente
+                    if (!last || Math.hypot(pos.x - last.x, pos.y - last.y) > 5) {
+                        puppetPins.push(pos);
+                        renderCanvas();
+                    }
+                    return;
+                }
+
                 // Movimento do PUPPET/WARP
                 // Nota: O movimento do Puppet agora é tratado em handlePuppetMove, mas mantemos isso
                 // caso activeWarpNode venha da ferramenta Warp Grid antiga (se 'r' e 'c' existirem).
@@ -2820,7 +2864,32 @@
                 // A lógica de finalização foi movida para dentro dos handlers específicos (handlePuppetUp, etc)
                 cleanupGlobalPointerListeners();
                 // ou para o final do handleDrawStart para ferramentas de um clique.
-                if (isDrawing) { stopDrawing(); } 
+                if (isDrawingPuppetLasso) {
+                    isDrawingPuppetLasso = false;
+                    if (puppetPins.length > 2) {
+                        // Fecha o laço e cria o puppet
+                        selectionPath = [...puppetPins, puppetPins[0]];
+                        finalizeAndCaptureSelection();
+                        createWarpGridFromSelection();
+                        
+                        if (selectionCanvas && warpGrid) {
+                             puppets.push({
+                                canvas: selectionCanvas,
+                                transform: { ...selectionTransform },
+                                grid: warpGrid,
+                                pins: [] // Sem pinos iniciais no modo freehand
+                            });
+                            selectionCanvas = null;
+                            warpGrid = null;
+                            puppetPins = [];
+                            selectionPath = [];
+                        }
+                    } else {
+                        puppetPins = []; // Cancela se for muito curto
+                    }
+                    renderCanvas();
+                } 
+                else if (isDrawing) { stopDrawing(); } 
                 else if (isSelecting) {
                     isSelecting = false;
                     finalizeAndCaptureSelection();
@@ -5502,6 +5571,42 @@ addFrameBtn.addEventListener('click', () => {
                             });
                         });
                     }
+                    renderCanvas();
+                } else if (activeWarpNode && activeWarpNode.type === 'puppet-grid') {
+                    // --- NOVA LÓGICA: Deformação Livre (Soft Body) ---
+                    let grid;
+                    if (activeWarpNode.puppetIndex === -1) {
+                        grid = warpGrid;
+                    } else {
+                        grid = puppets[activeWarpNode.puppetIndex].grid;
+                    }
+
+                    const activePt = grid[activeWarpNode.r][activeWarpNode.c];
+                    const oldX = activePt.x;
+                    const oldY = activePt.y;
+                    
+                    activePt.x = pos.x;
+                    activePt.y = pos.y;
+                    
+                    const deltaX = activePt.x - oldX;
+                    const deltaY = activePt.y - oldY;
+                    
+                    const radius = 150; // Raio de influência do "grab"
+                    
+                    grid.forEach(row => {
+                        row.forEach(pt => {
+                            if (pt === activePt) return;
+                            // Usa distância atual para sensação de "agarrar" a malha
+                            const dist = Math.hypot(pt.x - oldX, pt.y - oldY);
+                            
+                            if (dist < radius) {
+                                // Decaimento quadrático suave
+                                const falloff = Math.pow(1 - dist / radius, 2);
+                                pt.x += deltaX * falloff;
+                                pt.y += deltaY * falloff;
+                            }
+                        });
+                    });
                     renderCanvas();
                 }
             };
