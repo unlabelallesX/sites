@@ -4692,6 +4692,10 @@ addFrameBtn.addEventListener('click', () => {
                     return;
                 }
 
+                if (selectionCanvas) {
+                    applyAndSaveTransformation();
+                }
+
                 if (typeof VideoEncoder === 'undefined') {
                     showMessage('Erro', 'Seu navegador não suporta WebCodecs. Use Chrome/Edge atualizado.');
                     return;
@@ -4861,6 +4865,9 @@ addFrameBtn.addEventListener('click', () => {
                     showMessage('Erro', 'Não há quadros para exportar.');
                     return;
                 }
+                if (selectionCanvas) {
+                    applyAndSaveTransformation();
+                }
                 if (isPlaying) togglePlayState();
                 showLoadingModal('Preparando PNGs...');
                 const zip = new JSZip();
@@ -4892,6 +4899,9 @@ addFrameBtn.addEventListener('click', () => {
                 if (timelineFramesData.length === 0) {
                     showMessage('Erro', 'Não há quadros para exportar.');
                     return;
+                }
+                if (selectionCanvas) {
+                    applyAndSaveTransformation();
                 }
                 if (isPlaying) togglePlayState();
                 showLoadingModal('Preparando ZIP com camadas...');
@@ -4968,6 +4978,9 @@ addFrameBtn.addEventListener('click', () => {
                 if (timelineFramesData.length === 0) {
                     showMessage('Aviso', 'O projeto está vazio. Adicione alguns quadros para salvar.');
                     return;
+                }
+                if (selectionCanvas) {
+                    applyAndSaveTransformation();
                 }
                 showLoadingModal('Preparando o projeto...');
 
