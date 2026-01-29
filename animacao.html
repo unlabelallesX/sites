@@ -745,6 +745,11 @@
             drawingBackgroundCanvas.width = CANVAS_WIDTH;
             drawingBackgroundCanvas.height = CANVAS_HEIGHT;
 
+            // --- NOVO: Canvas de Cache para o Primeiro Plano (camadas acima) ---
+            const drawingForegroundCanvas = document.createElement('canvas');
+            drawingForegroundCanvas.width = CANVAS_WIDTH;
+            drawingForegroundCanvas.height = CANVAS_HEIGHT;
+
             // --- NOVO: Canvas para o traço em andamento ---
             // Este canvas irá conter a "forma" do traço, sem opacidade,
             // para evitar o acúmulo de transparência durante o desenho.
@@ -960,7 +965,6 @@
                         layerDiv.classList.add('cursor-not-allowed');
                     } else {
                         layerDiv.classList.add('cursor-grab');
-                        layerDiv.setAttribute('draggable', 'true');
                     }
 
                     if (index === currentLayerIndex) {
@@ -1925,6 +1929,7 @@
                         }
                         renderCanvas();
                         refreshTimelineSelectionUI();
+                        scrollTimelineToFrame(currentFrameIndex);
                     }
                 } else {
                     lastFrameTime = now;
@@ -2136,6 +2141,11 @@
                 ctx.globalAlpha = currentLayer.opacity;
                 ctx.globalCompositeOperation = currentLayer.blendMode || 'source-over';
                 ctx.drawImage(sharedTempLayerCanvas, 0, 0);
+
+                // 5. Desenha o cache do primeiro plano (camadas acima)
+                ctx.globalAlpha = 1.0;
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.drawImage(drawingForegroundCanvas, 0, 0);
 
                 // 5. Reseta o estado do canvas principal
                 ctx.globalAlpha = 1.0;
@@ -2685,11 +2695,31 @@
                     const currentImageData = currentLayer.history[currentLayer.historyIndex];
                     tempDrawCanvas.getContext('2d').putImageData(currentImageData, 0, 0);
 
-                    // 2. Cria um cache do fundo (todas as camadas abaixo)
-                    renderCanvas(currentLayerIndex); 
+                    // 2. Cria caches para camadas abaixo (Background) e acima (Foreground)
                     const bgCtx = drawingBackgroundCanvas.getContext('2d');
                     bgCtx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-                    bgCtx.drawImage(mainCanvas, 0, 0);
+                    
+                    const fgCtx = drawingForegroundCanvas.getContext('2d');
+                    fgCtx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+                    const tempRenderCtx = sharedTempLayerCanvas.getContext('2d');
+                    const currentFrame = timelineFramesData[currentFrameIndex];
+
+                    for (let i = 0; i < currentFrame.layers.length; i++) {
+                        if (i === currentLayerIndex) continue;
+                        const layer = currentFrame.layers[i];
+                        if (layer.visible) {
+                            const imgData = layer.history[layer.historyIndex];
+                            if (imgData) {
+                                tempRenderCtx.putImageData(imgData, 0, 0);
+                                const targetCtx = (i < currentLayerIndex) ? bgCtx : fgCtx;
+                                targetCtx.globalAlpha = layer.opacity;
+                                // Força source-over no foreground para garantir visibilidade em canvas transparente
+                                targetCtx.globalCompositeOperation = (i < currentLayerIndex) ? (layer.blendMode || 'source-over') : 'source-over';
+                                targetCtx.drawImage(sharedTempLayerCanvas, 0, 0);
+                            }
+                        }
+                    }
 
                     // 3. Limpa o canvas do traço para começar um novo
                     strokeCtx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
@@ -3652,8 +3682,9 @@
                     // --- CORREÇÃO PUPPET (FINAL) ---
                     // Carrega os pinos do novo quadro selecionado.
                     puppetPins = timelineFramesData[currentFrameIndex]?.puppetPins || [];
-                    renderCanvas(); 
-                    updateActiveFrameUI(currentFrameIndex, oldFrameIndex); // Otimizado
+                    renderCanvas();
+                    refreshTimelineSelectionUI();
+                    scrollTimelineToFrame(currentFrameIndex);
                     updateLayerPanelAndHistoryIndicators();
                 }
             };
@@ -3671,8 +3702,9 @@
                     // --- CORREÇÃO PUPPET (FINAL) ---
                     // Carrega os pinos do novo quadro selecionado.
                     puppetPins = timelineFramesData[currentFrameIndex]?.puppetPins || [];
-                    renderCanvas(); 
-                    updateActiveFrameUI(currentFrameIndex, oldFrameIndex); // Otimizado
+                    renderCanvas();
+                    refreshTimelineSelectionUI();
+                    scrollTimelineToFrame(currentFrameIndex);
                     updateLayerPanelAndHistoryIndicators();
                 }
             };
@@ -3839,6 +3871,7 @@ addFrameBtn.addEventListener('click', () => {
                 renderCanvas(); 
                 updateUI(); 
                 updateTimelineWidths();
+                scrollTimelineToFrame(currentFrameIndex);
             });
             
            duplicateFrameBtn.addEventListener('click', () => {
@@ -3994,6 +4027,7 @@ addFrameBtn.addEventListener('click', () => {
                     renderCanvas();
                     updateUI();
                     updateTimelineWidths();
+                    scrollTimelineToFrame(currentFrameIndex);
                 }
             });
 
@@ -4022,6 +4056,7 @@ addFrameBtn.addEventListener('click', () => {
                     renderCanvas(); 
                     updateUI();
                     updateTimelineWidths();
+                    scrollTimelineToFrame(currentFrameIndex);
                 }
             });
             
@@ -4268,74 +4303,96 @@ addFrameBtn.addEventListener('click', () => {
 
 
             // Lógica do Painel de Camadas
-            let draggedLayerDiv = null;
-
             layersList.addEventListener('pointerdown', (e) => {
                 const layerDiv = e.target.closest('.layer-item');
-                const currentLayers = timelineFramesData[currentFrameIndex].layers;
-                if (e.target.closest('.delete-layer') || e.target.closest('.rename-layer') || e.target.closest('.toggle-visibility') || e.target.classList.contains('layer-opacity-slider')) {
+                if (!layerDiv) return;
+
+                // CORREÇÃO: Se o alvo for um slider (input range), deixa o navegador cuidar da interação
+                // e não inicia a lógica de arrastar a camada. Isso corrige o bug do slider não funcionar.
+                if ((e.target.tagName === 'INPUT' && e.target.type === 'range') || 
+                    e.target.closest('.delete-layer, .rename-layer, .toggle-visibility')) 
+                {
                     return;
                 }
-                if (layerDiv && !currentLayers[parseInt(layerDiv.dataset.layerIndex)].isBackground) {
-                    draggedLayerDiv = layerDiv;
-                    draggedLayerDiv.classList.add('dragging');
-                    e.preventDefault();
-                }
-            });
-
-            layersList.addEventListener('pointermove', (e) => {
-                if (!draggedLayerDiv) return;
-                e.preventDefault();
-                const targetLayerDiv = e.target.closest('.layer-item');
-                if (targetLayerDiv && draggedLayerDiv !== targetLayerDiv) {
-                    const targetRect = targetLayerDiv.getBoundingClientRect();
-                    const midPoint = targetRect.top + targetRect.height / 2;
-                    const isBefore = e.clientY < midPoint;
-                    
-                    if (isBefore) {
-                        layersList.insertBefore(draggedLayerDiv, targetLayerDiv);
-                    } else {
-                        layersList.insertBefore(draggedLayerDiv, targetLayerDiv.nextSibling);
-                    }
-                }
-            });
-            
-            layersList.addEventListener('pointerup', () => {
-                if (!draggedLayerDiv) return;
-
+                
                 const currentLayers = timelineFramesData[currentFrameIndex].layers;
-                const newOrderDivs = Array.from(layersList.children);
-                
-                const oldDataIndex = parseInt(draggedLayerDiv.dataset.layerIndex);
-                const newDataIndex = currentLayers.length - 1 - newOrderDivs.indexOf(draggedLayerDiv);
-                
-                // --- APLICA A REORDENAÇÃO EM TODOS OS FRAMES ---
-                timelineFramesData.forEach(frame => {
-                    const layerToMove = frame.layers.splice(oldDataIndex, 1)[0];
-                    frame.layers.splice(newDataIndex, 0, layerToMove);
-                });
-
-                const bgLayer = currentLayers.find(l => l.isBackground);
-                const bgIndex = currentLayers.indexOf(bgLayer);
-                if (bgIndex !== 0) {
-                    currentLayers.splice(bgIndex, 1);
-                    currentLayers.unshift(bgLayer);
+                if (currentLayers[parseInt(layerDiv.dataset.layerIndex)].isBackground) {
+                    return;
                 }
 
-                currentLayerIndex = newDataIndex;
-                preferredLayerIndex = newDataIndex;
+                let isLayerDragging = false;
+                const dragThreshold = 5;
+                const startPos = { x: e.clientX, y: e.clientY };
+                
+                let draggedLayerDiv = layerDiv;
 
-                draggedLayerDiv.classList.remove('dragging');
-                draggedLayerDiv = null;
+                const onPointerMove = (moveEvent) => {
+                    if (!isLayerDragging) {
+                        const dx = Math.abs(moveEvent.clientX - startPos.x);
+                        const dy = Math.abs(moveEvent.clientY - startPos.y);
+                        if (dx > dragThreshold || dy > dragThreshold) {
+                            isLayerDragging = true;
+                            draggedLayerDiv.classList.add('dragging');
+                        }
+                    }
 
-                updateUI();
-                renderCanvas();
+                    if (isLayerDragging) {
+                        moveEvent.preventDefault();
+                        const targetLayerDiv = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY)?.closest('.layer-item');
+                        
+                        if (targetLayerDiv && draggedLayerDiv !== targetLayerDiv && layersList.contains(targetLayerDiv)) {
+                            const targetRect = targetLayerDiv.getBoundingClientRect();
+                            const midPoint = targetRect.top + targetRect.height / 2;
+                            const isBefore = moveEvent.clientY < midPoint;
+                            
+                            if (isBefore) {
+                                layersList.insertBefore(draggedLayerDiv, targetLayerDiv);
+                            } else {
+                                layersList.insertBefore(draggedLayerDiv, targetLayerDiv.nextSibling);
+                            }
+                        }
+                    }
+                };
+
+                const onPointerUp = () => {
+                    document.removeEventListener('pointermove', onPointerMove);
+                    document.removeEventListener('pointerup', onPointerUp);
+
+                    if (isLayerDragging && draggedLayerDiv) {
+                        const currentLayers = timelineFramesData[currentFrameIndex].layers;
+                        const newOrderDivs = Array.from(layersList.children);
+                        
+                        const oldDataIndex = parseInt(draggedLayerDiv.dataset.layerIndex);
+                        const newDataIndex = currentLayers.length - 1 - newOrderDivs.indexOf(draggedLayerDiv);
+                        
+                        timelineFramesData.forEach(frame => {
+                            const layerToMove = frame.layers.splice(oldDataIndex, 1)[0];
+                            frame.layers.splice(newDataIndex, 0, layerToMove);
+                        });
+
+                        currentLayerIndex = newDataIndex;
+                        preferredLayerIndex = newDataIndex;
+
+                        draggedLayerDiv.classList.remove('dragging');
+                        
+                        updateUI();
+                        renderCanvas();
+                    }
+                };
+
+                document.addEventListener('pointermove', onPointerMove);
+                document.addEventListener('pointerup', onPointerUp);
             });
 
             // --- LÓGICA DE EVENTOS DA LISTA DE CAMADAS (CORRIGIDA) ---
             layersList.addEventListener('click', e => {
                 const layerDiv = e.target.closest('.layer-item');
                 if (!layerDiv) return;
+
+                // Adicionado: Impede que um clique no slider (após arrastar) mude a camada selecionada.
+                if (e.target.tagName === 'INPUT' && e.target.type === 'range') {
+                    return;
+                }
 
                 const currentLayers = timelineFramesData[currentFrameIndex].layers;
                 const allLayerDivs = Array.from(layersList.children);
@@ -4549,6 +4606,12 @@ addFrameBtn.addEventListener('click', () => {
                     panY = 0;
                     scale = 1;
                     console.warn("Resetando visualização corrompida.");
+                }
+
+                // Se a escala for 1x, reseta a posição do pan (navegação)
+                if (scale === 1) {
+                    panX = 0;
+                    panY = 0;
                 }
 
                 // Aplica a transformação
@@ -5305,6 +5368,22 @@ addFrameBtn.addEventListener('click', () => {
                 drawFrameMarkers();
             }
 
+            // NOVA FUNÇÃO: Garante que o frame ativo esteja visível na timeline
+            function scrollTimelineToFrame(frameIndex) {
+                const timelineContainer = document.getElementById('timeline-container');
+                // Tenta encontrar a célula do frame atual. Pode ser qualquer uma na coluna.
+                const cell = timelineFrames.querySelector(`.timeline-cell[data-frame-index="${frameIndex}"]`);
+
+                if (cell) {
+                    // O método scrollIntoView rolará o container pai (#timeline-container)
+                    // para que a célula fique visível. 'nearest' evita rolagens desnecessárias.
+                    cell.scrollIntoView({
+                        behavior: 'smooth', // Animação suave
+                        block: 'nearest',   // Alinhamento vertical
+                        inline: 'nearest'   // Alinhamento horizontal (o mais importante aqui)
+                    });
+                }
+            }
 
             function updateAudioClipUI(track) {
                 if (!track || !track.element) return;
@@ -5674,6 +5753,10 @@ addFrameBtn.addEventListener('click', () => {
                 const isResizeHandle = e.target.classList.contains('resize-handle');
                 const isDeleteBtn = e.target.classList.contains('delete-audio-btn');
 
+                let isAudioDragging = false;
+                const dragThreshold = 5;
+                const startClientX = e.clientX;
+
                 if (!targetClipEl || isDeleteBtn) return;
 
                 if (e.button !== 0 && !isResizeHandle) {
@@ -5695,38 +5778,46 @@ addFrameBtn.addEventListener('click', () => {
                     audioInteractionMode = e.target.classList.contains('left') ? 'resize-left' : 'resize-right';
                 } else {
                     audioInteractionMode = 'drag-clip';
-                    targetClipEl.classList.add('dragging');
                 }
-
-                e.preventDefault();
 
                 const onMouseMove = (moveEvent) => {
                     if (!audioInteractionMode || !activeTrackId) return;
-                    const activeTrack = audioTracks.find(t => t.id === activeTrackId);
-                    if (!activeTrack) return;
 
-                    const dx = moveEvent.clientX - audioInteractionStartX;
-                    const deltaTime = dx / pixelsPerSecond();
-
-                    if (audioInteractionMode === 'drag-clip') {
-                        const newTimelineStart = initialAudioState.timelineStart + deltaTime;
-                        activeTrack.timelineStart = Math.max(0, newTimelineStart);
-                    } else if (audioInteractionMode === 'resize-left') {
-                        const newTrimStart = initialAudioState.trimStart + deltaTime;
-                        const newTrimDuration = initialAudioState.trimDuration - deltaTime;
-
-                        if (newTrimDuration > 0.1 && newTrimStart >= 0) {
-                            activeTrack.trimStart = newTrimStart;
-                            activeTrack.trimDuration = newTrimDuration;
-                            activeTrack.timelineStart = initialAudioState.timelineStart + deltaTime;
-                        }
-                    } else if (audioInteractionMode === 'resize-right') {
-                        const newTrimDuration = initialAudioState.trimDuration + deltaTime;
-                        if (newTrimDuration > 0.1 && (activeTrack.trimStart + newTrimDuration) <= activeTrack.originalBuffer.duration) {
-                            activeTrack.trimDuration = newTrimDuration;
+                    if (!isAudioDragging && Math.abs(moveEvent.clientX - startClientX) > dragThreshold) {
+                        isAudioDragging = true;
+                        if (audioInteractionMode === 'drag-clip') {
+                            targetClipEl.classList.add('dragging');
                         }
                     }
-                    updateAudioClipUI(activeTrack);
+
+                    if (isAudioDragging) {
+                        moveEvent.preventDefault();
+                        const activeTrack = audioTracks.find(t => t.id === activeTrackId);
+                        if (!activeTrack) return;
+
+                        const dx = moveEvent.clientX - audioInteractionStartX;
+                        const deltaTime = dx / pixelsPerSecond();
+
+                        if (audioInteractionMode === 'drag-clip') {
+                            const newTimelineStart = initialAudioState.timelineStart + deltaTime;
+                            activeTrack.timelineStart = Math.max(0, newTimelineStart);
+                        } else if (audioInteractionMode === 'resize-left') {
+                            const newTrimStart = initialAudioState.trimStart + deltaTime;
+                            const newTrimDuration = initialAudioState.trimDuration - deltaTime;
+
+                            if (newTrimDuration > 0.1 && newTrimStart >= 0) {
+                                activeTrack.trimStart = newTrimStart;
+                                activeTrack.trimDuration = newTrimDuration;
+                                activeTrack.timelineStart = initialAudioState.timelineStart + deltaTime;
+                            }
+                        } else if (audioInteractionMode === 'resize-right') {
+                            const newTrimDuration = initialAudioState.trimDuration + deltaTime;
+                            if (newTrimDuration > 0.1 && (activeTrack.trimStart + newTrimDuration) <= activeTrack.originalBuffer.duration) {
+                                activeTrack.trimDuration = newTrimDuration;
+                            }
+                        }
+                        updateAudioClipUI(activeTrack);
+                    }
                 };
 
                 const onMouseUp = () => {
